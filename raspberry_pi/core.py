@@ -3,6 +3,7 @@ import gpiozero
 import cv2
 import threading
 import time
+import matplotlib.pyplot as plt
 
 class CameraThread(threading.Thread):
     def __init__(self, runtime = 20):
@@ -49,7 +50,7 @@ class MotorThread(threading.Thread):
         accel_delays  = np.empty(steps)
         prev_velocity = 0
         next_velocity = 0
-        
+
         for i, delay in enumerate(accel_delays):
             if i < steps/2:
                 next_velocity = np.sqrt(prev_velocity**2 + 2*acceleration*degs_per_step)
@@ -134,10 +135,38 @@ def motor_jog(current_step, delays, direction):
 
     return jog_steps, jog_times
 
-def get_camera_postion():
-    pixel_position = 0
+def get_camera_postion(bounds = [[720, 750],[125,510]], offset = 5, device = 1,
+                       output_to_file = False, filename_base = './camera'):
+    cap = cv2.VideoCapture(device)
+    x_range = (bounds[0][0],bounds[0][1])
+    y_range = (bounds[1][0],bounds[1][1])
 
+    ret, frame = cap.read()
 
+    bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
+    lines  = np.average(img, axis=1)
+    cutoff = np.amin(lines) + offset
+
+    _, w = bw.shape
+
+    pixel_position = np.where(lines < cutoff)[0][0]
+
+    if output_to_file:
+        frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
+        frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
+        frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
+        frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
+
+        plt.plot(range(*y_range),lines)
+        plt.axhline(cutoff)
+        plt.savefig(''.join([filename_base,'_lines.png']))
+
+        frame[pixel_position + y_range[0],:,:] = [[0,0,255]]*w
+
+        cv2.imwrite(''.join([filename_base,'_image.png']), frame)
+
+    cap.release()
 
     return pixel_position
 
