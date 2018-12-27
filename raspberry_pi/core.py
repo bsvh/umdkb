@@ -43,13 +43,28 @@ class MotorThread(threading.Thread):
         self.runtime = runtime
         self.np_steps = np.empty()
     def run(self):
-        delay = (1/self.velocity) * 360/6400 * steps
+        degs_per_step    = 360/6400
+        delay_at_given_v = (1/self.velocity)*degs_per_step
+
+        accel_delays  = np.empty(steps)
+        prev_velocity = 0
+        next_velocity = 0
+        
+        for i, delay in enumerate(accel_delays):
+            if i < steps/2:
+                next_velocity = np.sqrt(prev_velocity**2 + 2*acceleration*degs_per_step)
+            else:
+                next_velocity = np.sqrt(prev_velocity**2 - 2*acceleration*degs_per_step)
+
+            delay = (2*degs_per_step)/(prev_velocity + next_velocity)
+
+        delays = np.maximum(np.full(steps,delay_at_given_v),accel_delays)
 
         self.step_list.append(self.current_step)
         self.timestamp.append(time.process_time())
 
         time.sleep(self.buffer)
-        jog_steps, jog_times = motor_jog(current_step, delay, steps, 'forward', acceleration)
+        jog_steps, jog_times = motor_jog(current_step, delays, 'forward')
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
 
@@ -59,7 +74,7 @@ class MotorThread(threading.Thread):
         self.timestamp.append(time.process_time())
 
         time.sleep(self.buffer)
-        jog_steps, jog_times = motor_jog(current_step, delay, steps, 'reverse', acceleration)
+        jog_steps, jog_times = motor_jog(current_step, delays, 'reverse')
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
 
@@ -88,13 +103,42 @@ def velocity_mode(current_step, acceleration, target_velocity, buffer = 1, steps
 
     # PUT VELOCITY AND VOLTAGE CALCULATION CODE HERE
 
-def motor_jog(delay, steps, direction, acceleration):
+def motor_jog(current_step, delays, direction):
     jog_steps = []
     jog_times = []
+
+    multiplier = 1
+
+    pulse_pin     = DigitalOutputDevice(17)
+    direction_pin = DigitalOutputDevice(27)
+    enable_pin    = DigitalOutputDevice(22)
+
+    if direction == 'forward':
+        direction_pin.off()
+    elif direction == 'reverse':
+        direction_pin.on()
+        multiplier = -1
+
+    enable.on()
+
+    for delay in delays:
+        pulse.on()
+        time.sleep(delay/2)
+        pulse.off()
+        time.sleep(delay/2)
+        current_step += multiplier
+        jog_steps.append(current_step)
+        jog_times.append(time.process_time())
+
+    enable.off()
+
     return jog_steps, jog_times
 
 def get_camera_postion():
     pixel_position = 0
+
+
+
     return pixel_position
 
 def get_coil_voltage():
