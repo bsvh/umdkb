@@ -44,44 +44,27 @@ class MotorThread(threading.Thread):
         self.runtime = runtime
         self.np_steps = np.empty()
     def run(self):
-        degs_per_step    = 360/6400
-        delay_at_given_v = (1/self.velocity)*degs_per_step
-
-        accel_delays  = np.empty(steps)
-        prev_velocity = 0
-        next_velocity = 0
-        v_sum_min = 1e-6 # THIS IS A GUESS. NEEDS TO BE REFINED
-
-        for i, delay in enumerate(accel_delays):
-            if i < steps/2:
-                next_velocity = np.sqrt(prev_velocity**2 + 2*acceleration*degs_per_step)
-            else:
-                next_velocity = np.sqrt(prev_velocity**2 - 2*acceleration*degs_per_step)
-
-            delay = (2*degs_per_step)/max(v_sum_min,(prev_velocity + next_velocity))
-
-        delays = np.maximum(np.full(steps,delay_at_given_v),accel_delays)
-
+        current_step = self.current_step
         self.step_list.append(self.current_step)
         self.timestamp.append(time.perf_counter())
 
         time.sleep(self.buffer)
-        jog_steps, jog_times, current_step = motor_jog(current_step, delays, 'forward')
+        jog_steps, jog_times, current_step = motor_jog(current_step, self.velocity,
+                                                       self.acceleration, self.steps, 'forward')
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
 
         self.current_step = current_step
-
         self.step_list.append(self.current_step)
         self.timestamp.append(time.perf_counter())
 
         time.sleep(self.buffer)
-        jog_steps, jog_times, current_step = motor_jog(current_step, delays, 'reverse')
+        jog_steps, jog_times, current_step = motor_jog(current_step, self.velocity,
+                                                       self.acceleration, self.steps, 'reverse')
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
 
         self.current_step = current_step
-
         self.step_list.append(self.current_step)
         self.timestamp.append(time.perf_counter())
 
@@ -114,7 +97,7 @@ def velocity_mode(current_step, acceleration, target_velocity, buffer = 1, steps
 
     velocity, voltage, velocity_err, voltage_err = velocity_calc(steps, z_positions, voltages)
 
-    return velocity, voltage, current_step
+    return velocity, voltage, velocity_err, voltage_err, current_step
 
 def velocity_calc(steps, z_positions, voltages):
     ### VELOCITY AND VOLTAGE CALCULATION ###
@@ -302,9 +285,9 @@ def force_mode(current_step, target_pixel):
 
     current_step = motor_pid(current_step, target_pixel)
 
-    current = coil_pid(target_pixel)
+    current, current_err = coil_pid(target_pixel)
 
-    return current, current_step
+    return current, current_err, current_step
 
 def motor_step(delay, direction = 'forward'):
     pulse_pin     = DigitalOutputDevice(17)
@@ -326,7 +309,26 @@ def motor_step(delay, direction = 'forward'):
     enable_pin.off()
     return
 
-def motor_jog(current_step, delays, direction):
+def motor_jog(current_step, velocity, acceleration, steps, direction):
+
+    degs_per_step    = 360/6400
+    delay_at_given_v = (1/velocity)*degs_per_step
+
+    accel_delays  = np.empty(steps)
+    prev_velocity = 0
+    next_velocity = 0
+    v_sum_min = 1e-6 # THIS IS A GUESS. NEEDS TO BE REFINED
+
+    for i, delay in enumerate(accel_delays):
+        if i < steps/2:
+            next_velocity = np.sqrt(prev_velocity**2 + 2*acceleration*degs_per_step)
+        else:
+            next_velocity = np.sqrt(prev_velocity**2 - 2*acceleration*degs_per_step)
+
+        delay = (2*degs_per_step)/max(v_sum_min,(prev_velocity + next_velocity))
+
+    delays = np.maximum(np.full(steps,delay_at_given_v),accel_delays)
+
     jog_steps = []
     jog_times = []
 
@@ -396,8 +398,27 @@ def motor_pid(current_step, target_pixel):
 
 def coil_pid(current_step, target_pixel):
     # WRITE PID CONTROLLER FOR COIL HERE
-    return current, current_step
+    return current, current_err, current_step
 
 def get_coil_voltage():
     # PUT COIL VOLTAGE CODE HERE
     return coil_voltage
+
+def mass_calc(current, current_err, bl_factor, bl_factor_err, g, g_err, tare_current, tare_current_err):
+    norm_current = current - tare_current
+    norm_current_err = np.sqrt(current_err**2 + tare_current**2)
+
+    mass = norm_current*bl_factor/g
+    mass_err = (1/g)*np.sqrt((bl_factor*norm_current_err)**2 +
+               (norm_current*bl_factor*g_err/g)**2 +
+               (norm_current*bl_factor_err)**2)
+
+    return mass, mass_err
+
+def bl_factor_calc(velocity, voltage, velocity_err, voltage_err):
+    bl_factor = voltage/velocity
+
+    bl_factor_err = (1/velocity)*np.sqrt(voltage_err**2 +
+                                         (voltage*velocity_err/velocity)**2)
+
+    return bl_factor, bl_factor_err
