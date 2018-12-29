@@ -1,22 +1,18 @@
 import numpy as np
-import gpiozero
+from gpiozero import DigitalOutputDevice
 import cv2
 import threading
 import time
 import matplotlib.pyplot as plt
+import sys, select, os
 
 class CameraThread(threading.Thread):
     def __init__(self, runtime = 20):
         super(CameraThread, self).__init__()
-        self.postion = []
-        self.timestamp = []
         self.runtime = runtime
         self.np_position = np.empty()
     def run(self):
-        while(time.perf_counter() < self.start_time + self.runtime):
-            self.position.append(get_camera_postion())
-            self.timestamp.append(time.perf_counter())
-        self.np_position = np.array([self.position,self.timestamp])
+        self.np_position = get_camera_position(run_time = self.runtime)
 
 class CoilThread(threading.Thread):
     def __init__(self, runtime = 20):
@@ -93,7 +89,7 @@ def velocity_mode(current_step, acceleration, target_velocity, buffer = 1, steps
     for times in steps[1,:],pixel_positions[1,:],voltages[1,:]:
         times = times - start_time
 
-    z_positions = np.array([pixel_to_z(pixel_positions[0,:]), pixel_positions[1,:])
+    z_positions = np.array([pixel_to_z(pixel_positions[0,:]), pixel_positions[1,:]])
 
     velocity, voltage, velocity_err, voltage_err = velocity_calc(steps, z_positions, voltages)
 
@@ -290,11 +286,13 @@ def force_mode(current_step, target_pixel):
     return current, current_err, current_step
 
 def motor_step(delay, direction = 'forward'):
-    pulse_pin     = DigitalOutputDevice(17)
-    direction_pin = DigitalOutputDevice(27)
+    pulse_pin     = DigitalOutputDevice(24)
+    direction_pin = DigitalOutputDevice(25)
     enable_pin    = DigitalOutputDevice(22)
 
-    if direction == 'forward':
+    min_delay = 1.9E-6
+    
+    if direction   == 'forward':
         direction_pin.off()
     elif direction == 'reverse':
         direction_pin.on()
@@ -302,9 +300,9 @@ def motor_step(delay, direction = 'forward'):
     enable_pin.on()
 
     pulse_pin.on()
-    time.sleep(delay/2)
+    time.sleep(max(min_delay,delay/2))
     pulse_pin.off()
-    time.sleep(delay/2)
+    time.sleep(max(min_delay,delay/2))
 
     enable_pin.off()
     return
@@ -313,22 +311,25 @@ def motor_jog(current_step, velocity, acceleration, steps, direction):
 
     degs_per_step    = 360/6400
     delay_at_given_v = (1/velocity)*degs_per_step
+    print(velocity, acceleration, steps, delay_at_given_v)
 
     accel_delays  = np.empty(steps)
     prev_velocity = 0
     next_velocity = 0
-    v_sum_min = 1e-6 # THIS IS A GUESS. NEEDS TO BE REFINED
+    min_delay = 1.9e-6 # from motor driver specs
 
     for i, delay in enumerate(accel_delays):
         if i < steps/2:
             next_velocity = np.sqrt(prev_velocity**2 + 2*acceleration*degs_per_step)
         else:
-            next_velocity = np.sqrt(prev_velocity**2 - 2*acceleration*degs_per_step)
+            next_velocity = np.sqrt(max(0,prev_velocity**2 - 2*acceleration*degs_per_step))
 
-        delay = (2*degs_per_step)/max(v_sum_min,(prev_velocity + next_velocity))
+        delay = max(min_delay,(2*degs_per_step)/(prev_velocity + next_velocity))
 
-    delays = np.maximum(np.full(steps,delay_at_given_v),accel_delays)
-
+    #delays = np.maximum(np.full(steps,delay_at_given_v),accel_delays, dtype=np.float16)
+    delays = np.full(steps,delay_at_given_v)
+    print(delays)
+    
     jog_steps = []
     jog_times = []
 
@@ -344,45 +345,95 @@ def motor_jog(current_step, velocity, acceleration, steps, direction):
 
     return jog_steps, jog_times, current_step
 
-def get_camera_postion(bounds = [[720, 750],[125,510]], offset = 5, device = 1,
+def get_camera_postion(bounds = [[720, 750],[125,510]], offset = 5, device = 0, run_time = 1,
                        output_to_file = False, filename_base = './camera'):
     cap = cv2.VideoCapture(device)
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
+    
+    start_time = time.perf_counter()
+    timestamp = []
+    pixel_list = []
+    
+    while(time.perf_counter() < start_time + run_time):
+        ret, frame = cap.read()
 
-    ret, frame = cap.read()
+        bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
+        lines  = np.average(img, axis=1)
+        cutoff = np.amin(lines) + offset
 
-    bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
-    lines  = np.average(img, axis=1)
-    cutoff = np.amin(lines) + offset
+        _, w = bw.shape
 
-    _, w = bw.shape
+        this_pixel = np.where(lines < cutoff)[0][0] + y_range[0]
+        pixel_list.append(this_pixel)
+        timestamp.append(time.perf_counter())
 
-    pixel_position = np.where(lines < cutoff)[0][0]
+        if output_to_file:
+            frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
+            frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
+            frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
+            frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
 
-    if output_to_file:
+            plt.plot(range(*y_range),lines)
+            plt.axhline(cutoff)
+            plt.savefig(''.join([filename_base,'_lines.png']))
+
+            frame[pixel_position + y_range[0],:,:] = [[0,0,255]]*w
+
+            cv2.imwrite(''.join([filename_base,'_image.png']), frame)
+
+    cap.release()
+    pixel_position = np.array([pixel_list,timestamp])
+
+    return pixel_position
+
+def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0):
+    cap = cv2.VideoCapture(device)
+    x_range = (bounds[0][0],bounds[0][1])
+    y_range = (bounds[1][0],bounds[1][1])
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
+    
+    os.system('clear')
+    print("Press enter when aligned")
+
+    while (cap.isOpened()):
+        ret, frame = cap.read()
+
+        bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
+        lines  = np.average(img, axis=1)
+        cutoff = np.amin(lines) + offset
+
+        _, w = bw.shape
+
+        position = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
+
+        frame[position,:,:] = [[0,0,255]]*w
+        
         frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
         frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
         frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
         frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
+        cv2.imshow('frame', frame)
 
-        plt.plot(range(*y_range),lines)
-        plt.axhline(cutoff)
-        plt.savefig(''.join([filename_base,'_lines.png']))
-
-        frame[pixel_position + y_range[0],:,:] = [[0,0,255]]*w
-
-        cv2.imwrite(''.join([filename_base,'_image.png']), frame)
-
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            cv2.destroyAllWindows()
+            break
+        
+        if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+            cv2.destroyAllWindows()
+            break
+    
     cap.release()
 
-    return pixel_position
 
 def pixel_to_z(pixel, fitting_func = None, calibration_file = './calibration.npy'):
     calibration_params = np.load(calibration_file)
 
-    if fitting_func = None:
+    if fitting_func == None:
         fitting_func = lin_fit
 
     z = fitting_func(pixel, *calibration_params['pixel_to_z_params'])
