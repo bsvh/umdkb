@@ -5,6 +5,7 @@ import threading
 import time
 import matplotlib.pyplot as plt
 import sys, select, os
+from dac8552 import DAC8552, DAC_A, DAC_B, MODE_POWER_DOWN_100K
 
 class CameraThread(threading.Thread):
     def __init__(self, runtime = 20):
@@ -45,7 +46,7 @@ class MotorThread(threading.Thread):
         self.step_list.append(self.current_step)
         self.timestamp.append(time.perf_counter())
 
-        time.sleep(self.buffer)
+        time.sleep(10) # to wait for camera
         jog_steps, jog_times, current_step = motor_jog(current_step, self.velocity,
                                                        self.acceleration, self.steps)
         self.step_list.extend(jog_steps)
@@ -286,12 +287,12 @@ def force_mode(current_step, target_pixel):
 
     return current, current_err, current_step
 
-def motor_jog(current_step, velocity, acceleration, steps, absolute = False): # velocity in steps/s, acceleration in steps/s^2
+def motor_jog(current_step, velocity = 3200, acceleration = 2000, steps = 1600, absolute = False): # velocity in steps/s, acceleration in steps/s^2
     # defines pin numbers
     pulse_pin     = DigitalOutputDevice(24)
     direction_pin = DigitalOutputDevice(25)
     enable_pin    = DigitalOutputDevice(22)
-    
+
     # sets correct direction pin voltage and enables the enable pin
     enable_pin.on()
     if absolute:
@@ -305,7 +306,7 @@ def motor_jog(current_step, velocity, acceleration, steps, absolute = False): # 
         direction_pin.off()
     elif multiplier == -1:
         direction_pin.on()
-    
+
     # creates loop variables
     jog_steps = []
     jog_times = []
@@ -313,59 +314,68 @@ def motor_jog(current_step, velocity, acceleration, steps, absolute = False): # 
     initial_step = current_step
     acceleration_steps = velocity**2/(2*acceleration) # approx. num. of steps taken during acceleration
     current_time = time.perf_counter()
-    
-    #steps forward at the appropriate time
-    while current_step != target_step:
-        #turn pulse pin on and get current time
-        last_time = current_time
-        current_time = time.perf_counter()
-        pulse_pin.on()
-        dt = current_time - last_time
-        
-        ## calculate delay time to next step
-        half_over = np.absolute(current_step - initial_step) > np.absolute(target_step - current_step) # are we more than half done travelling?
-        # if we are still accelerating, increase current_velocity
-        if (current_velocity != velocity and not half_over):
-            current_velocity = min(velocity, current_velocity + acceleration * max(dt,1E-7))
-        # if we are decelerating, decrease current_velocity
-        elif (np.absolute(target_step - current_step) < acceleration_steps != velocity and half_over):
-            current_velocity = max(100, current_velocity - acceleration * dt)
-        
-        # each step takes 1/current_velocity time (in s)
-        delay = 1/current_velocity
-        
-        # save values
-        jog_times.append(current_time) # save current time
-        current_step = current_step + multiplier # calculate current step
-        jog_steps.append(current_step) # save current step
-        
-        # WAIT to turn pulse pin off, then wait again
-        while delay/2 > (time.perf_counter() - current_time):
-            pass
-        # turn pulse pin off, WAIT
+
+    try:
+        #steps forward at the appropriate time
+        while current_step != target_step:
+            #turn pulse pin on and get current time
+            last_time = current_time
+            current_time = time.perf_counter()
+            pulse_pin.on()
+            dt = current_time - last_time
+
+            ## calculate delay time to next step
+            half_over = np.absolute(current_step - initial_step) > np.absolute(target_step - current_step) # are we more than half done travelling?
+            # if we are still accelerating, increase current_velocity
+            if (current_velocity != velocity and not half_over):
+                current_velocity = min(velocity, current_velocity + acceleration * max(dt,1E-7))
+            # if we are decelerating, decrease current_velocity
+            elif (np.absolute(target_step - current_step) < acceleration_steps != velocity and half_over):
+                current_velocity = max(100, current_velocity - acceleration * dt)
+
+            # each step takes 1/current_velocity time (in s)
+            delay = 1/current_velocity
+
+            # save values
+            jog_times.append(current_time) # save current time
+            current_step = current_step + multiplier # calculate current step
+            jog_steps.append(current_step) # save current step
+
+            # WAIT to turn pulse pin off, then wait again
+            while delay/2 > (time.perf_counter() - current_time):
+                pass
+            # turn pulse pin off, WAIT
+            pulse_pin.off()
+            while delay > (time.perf_counter() - current_time):
+                pass
+
+        # done with movement, so we turn the enable pin off
+        enable_pin.off()
+
+    except KeyboardInterrupt:
+        print("\nUser exit during motor usage. Powering down.\n")
+
         pulse_pin.off()
-        while delay > (time.perf_counter() - current_time):
-            pass
-        
-    # done with movement, so we turn the enable pin off
-    enable_pin.off()
-            
+        enable_pin.off()
+
+        sys.exit(0)
+
     return jog_steps, jog_times, current_step
 
 def get_camera_position(bounds = [[720, 750],[125,510]], offset = 5, device = 0, run_time = 1,
                        output_to_file = False, filename_base = './camera'):
     cap = cv2.VideoCapture(device)
-    
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
-    
+
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
-    
+
     start_time = time.perf_counter()
     timestamp = []
     pixel_list = []
-    
+
     while(time.perf_counter() < start_time + run_time):
         ret, frame = cap.read()
 
@@ -406,7 +416,7 @@ def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0,
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
-    
+
     print("Press q on camera display window to end")
 
     while (cap.isOpened()):
@@ -422,11 +432,11 @@ def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0,
         position = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
 
         frame[position,:,:] = [[0,0,255]]*w
-        
+
         if limits is not None:
             frame[limits[0],:,:] = [[255,0,0]]*w
             frame[limits[1],:,:] = [[0,0,0]]*w
-        
+
         frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
         frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
         frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
@@ -436,7 +446,7 @@ def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0,
         if cv2.waitKey(1) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
             break
-    
+
     cap.release()
     return
 
@@ -447,11 +457,11 @@ def jog_to_pixel(current_step, target_pixel, bounds = [[720, 750],[125,510]], of
     y_range = (bounds[1][0],bounds[1][1])
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
-    
+
     # set stepper motor control values
     velocity = 3200
     acceleration = 1000
-    
+
     # jog motor until pixel number is correct
     current_pixel = None
     while (target_pixel != current_pixel):
@@ -464,14 +474,14 @@ def jog_to_pixel(current_step, target_pixel, bounds = [[720, 750],[125,510]], of
         cutoff = np.amin(lines) + offset
 
         _, w = bw.shape
-        
+
         current_pixel = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
-        
+
         # show image on screeen if requested
         if show_image:
             frame[current_pixel,:,:] = [[0,0,255]]*w # line for current position
             frame[target_pixel,:,:] = [[255,0,0]]*w # line for target position
-            
+
             # creates frame around detection region
             frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
             frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
@@ -490,7 +500,7 @@ def jog_to_pixel(current_step, target_pixel, bounds = [[720, 750],[125,510]], of
             else:
                 dstep = 10
             _, _, current_step = motor_jog(current_step, velocity, acceleration, dstep)
-    
+
     # close up shop
     cv2.destroyAllWindows()
     cap.release()
@@ -502,7 +512,7 @@ def create_callibration_file(current_step, step_limits, pixel_limits, height_lim
     velocity = 3200
     acceleration = 1000
     _, _, current_step = motor_jog(current_step, velocity, acceleration, step_limits[0], absolute = True)
-    
+
     # create array with all steps, zeros for the pixel values, and their corresponding heights
     dStep = 20
     step_list = np.arange(step_limits[0],step_limits[1],dStep)
@@ -513,15 +523,15 @@ def create_callibration_file(current_step, step_limits, pixel_limits, height_lim
     print(height_list)
     print(step_limits)
     print(height_limits)
-    
-    
+
+
     # open camera and set properties
     cap = cv2.VideoCapture(device)
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
-    
+
     # jog motor until pixel number is correct
     current_pixel = None
     while (target_pixel != current_pixel):
@@ -534,14 +544,14 @@ def create_callibration_file(current_step, step_limits, pixel_limits, height_lim
         cutoff = np.amin(lines) + offset
 
         _, w = bw.shape
-        
+
         current_pixel = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
-        
+
         # show image on screeen if requested
         if show_image:
             frame[current_pixel,:,:] = [[0,0,255]]*w # line for current position
             frame[target_pixel,:,:] = [[255,0,0]]*w # line for target position
-            
+
             # creates frame around detection region
             frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
             frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
@@ -560,7 +570,7 @@ def create_callibration_file(current_step, step_limits, pixel_limits, height_lim
             else:
                 dstep = 10
             _, _, current_step = motor_jog(current_step, velocity, acceleration, dstep)
-    
+
     # close up shop
     cv2.destroyAllWindows()
     cap.release()
@@ -579,9 +589,80 @@ def pixel_to_z(pixel, fitting_func = None, calibration_file = './calibration.npy
 def lin_fit(pixel, m, b):
     return m*pixel + b
 
-def coil_pid(current_step, target_pixel):
-    # WRITE PID CONTROLLER FOR COIL HERE
+def coil_controller(current_step, target_pixel, pixel_err = 10, vref = 3.3, coil_resistance = 2040, amp_gain = 1):
+
+    current_step = jog_to_pixel(current_step, target_pixel)
+
+    _, current, _ = set_coil_current(vref = vref, coil_resistance = coil_resistance, amp_gain = amp_gain)
+
+    _, _, current_step = motor_jog(current_step, steps = -800)
+
+    current_pixel = get_camera_position()
+
+    # check to see if position has dropped more than 2 sigma from target
+    if current_pixel > target_pixel + 2*pixel_err:
+        print('more than 2 sigma below target pixel')
+        return None, None, current_step
+
+    elif current_pixel < target_pixel - 2*pixel_err:
+        print('more than 2 sigma above target pixel')
+        return None, None, current_step
+
+    else:
+        # drop current til the position starts to drop
+        while(current_pixel < target_pixel + pixel_err):
+            current -= 1e-4
+            current_pixel = get_camera_position()
+        counter = 0
+
+        #balance current
+        while(counter < 50):
+            _, next_current, _ = set_coil_current(current = current, vref = vref, coil_resistance = coil_resistance, amp_gain = amp_gain)
+            if abs(current_pixel - target_pixel) > pixel_err/2:
+                counter = 0
+            elif abs(current_pixel - target_pixel) > pixel_err/4:
+                current = next_current + (current_pixel - target_pixel)*1e-4
+            else:
+                counter += 1
+            current_pixel = get_camera_position()
+
+    # CODE TO CALCULATE COIL CURRENT ERROR
+    current_err = 0
+
+    set_coil_current(current = 0)
+
     return current, current_err, current_step
+
+def set_coil_current(current = None, vref = 3.3, coil_resistance = 2040, amp_gain = 1):
+    try:
+        if current is None:
+            target_voltage = vref
+            current = amp_gain*target_voltage/coil_resistance
+        else:
+            target_voltage = (1/amp_gain)*current*coil_resistance
+
+        if target_voltage > vref:
+            target_voltage = vref
+            raise RuntimeWarning('Target voltage too high! Setting to max voltage')
+
+    except RuntimeWarning as e:
+        print(str(e))
+
+    dac = DAC8552()
+
+    try:
+        dac.v_ref = vref
+        data = int(target_voltage*dac.digit_per_v)
+        dac.write_dac(DAC_A, data)
+
+    except KeyboardInterrupt:
+        print("\nUser exit during DAC usage. Powering down.\n")
+        # Put DAC to Power Down Mode:
+        dac.power_down(DAC_A, MODE_POWER_DOWN_100K)
+        dac.power_down(DAC_B, MODE_POWER_DOWN_100K)
+        sys.exit(0)
+
+    return data, current, target_voltage
 
 def get_coil_voltage():
     # PUT COIL VOLTAGE CODE HERE
