@@ -362,6 +362,25 @@ def motor_jog(current_step, velocity = 3200, acceleration = 2000, steps = 1600, 
 
     return jog_steps, jog_times, current_step
 
+def get_pixel_from_frame(frame, x_range, y_range, offset):
+    # get current pixel location
+    bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
+    lines  = np.average(img, axis=1)
+    cutoff = np.amin(lines) + offset
+
+    _, w = bw.shape
+    
+    current_pixel = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
+    return current_pixel, w
+
+def add_range_boxes(frame, x_range, y_range):
+    frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
+    frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
+    frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
+    frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
+    return frame
+        
 def get_camera_position(bounds = [[720, 750],[125,510]], offset = 5, device = 0, run_time = 1,
                        output_to_file = False, filename_base = './camera'):
     cap = cv2.VideoCapture(device)
@@ -378,24 +397,14 @@ def get_camera_position(bounds = [[720, 750],[125,510]], offset = 5, device = 0,
 
     while(time.perf_counter() < start_time + run_time):
         ret, frame = cap.read()
-
-        bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
-        lines  = np.average(img, axis=1)
-        cutoff = np.amin(lines) + offset
-
-        _, w = bw.shape
-
-        this_pixel = np.where(lines < cutoff)[0][0] + y_range[0]
+        this_pixel, w = get_pixel_from_frame(frame, x_range, y_range, offset)
+        
         pixel_list.append(this_pixel)
         timestamp.append(time.perf_counter())
 
         if output_to_file:
-            frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
-            frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
-            frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
-            frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
-
+            frame = add_range_boxes(frame, x_range, y_range)
+            
             plt.plot(range(*y_range),lines)
             plt.axhline(cutoff)
             plt.savefig(''.join([filename_base,'_lines.png']))
@@ -421,26 +430,23 @@ def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0,
 
     while (cap.isOpened()):
         ret, frame = cap.read()
-
-        bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
-        lines  = np.average(img, axis=1)
-        cutoff = np.amin(lines) + offset
-
-        _, w = bw.shape
-
-        position = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
+        position, w = get_pixel_from_frame(frame, x_range, y_range, offset) # this value is the vertical position in pixels
 
         frame[position,:,:] = [[0,0,255]]*w
 
         if limits is not None:
             frame[limits[0],:,:] = [[255,0,0]]*w
             frame[limits[1],:,:] = [[0,0,0]]*w
+<<<<<<< HEAD
 
         frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
         frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
         frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
         frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
+=======
+        
+        frame = add_range_boxes(frame, x_range, y_range)
+>>>>>>> 5425b5de5ffd8a3b0232113e1a58e9584b147510
         cv2.imshow('q to quit', frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -463,10 +469,11 @@ def jog_to_pixel(current_step, target_pixel, bounds = [[720, 750],[125,510]], of
     acceleration = 1000
 
     # jog motor until pixel number is correct
-    current_pixel = None
-    while (target_pixel != current_pixel):
+    num_hits = 0
+    while (num_hits < 10):
         # get current pixel location
         ret, frame = cap.read()
+<<<<<<< HEAD
 
         bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
@@ -477,16 +484,17 @@ def jog_to_pixel(current_step, target_pixel, bounds = [[720, 750],[125,510]], of
 
         current_pixel = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
 
+=======
+        current_pixel, w = get_pixel_from_frame(frame, x_range, y_range, offset) # this value is the vertical position in pixels
+        
+>>>>>>> 5425b5de5ffd8a3b0232113e1a58e9584b147510
         # show image on screeen if requested
         if show_image:
             frame[current_pixel,:,:] = [[0,0,255]]*w # line for current position
             frame[target_pixel,:,:] = [[255,0,0]]*w # line for target position
 
             # creates frame around detection region
-            frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
-            frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
-            frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
-            frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
+            frame = add_range_boxes(frame, x_range, y_range)
             cv2.imshow('q to quit', frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -494,43 +502,60 @@ def jog_to_pixel(current_step, target_pixel, bounds = [[720, 750],[125,510]], of
                 current_pixel = target_pixel
 
         # adjust position with stepper motor
+        dstep = min(700,abs(current_pixel - target_pixel))
         if target_pixel != current_pixel:
+            num_hits = 0
             if target_pixel > current_pixel:
-                dstep = -10
-            else:
-                dstep = 10
+                dstep = -dstep
             _, _, current_step = motor_jog(current_step, velocity, acceleration, dstep)
+<<<<<<< HEAD
 
+=======
+        else:
+            num_hits = num_hits + 1
+    
+>>>>>>> 5425b5de5ffd8a3b0232113e1a58e9584b147510
     # close up shop
     cv2.destroyAllWindows()
     cap.release()
     return current_step
 
-def create_callibration_file(current_step, step_limits, pixel_limits, height_limits,
+def create_callibration_file(current_step, filename, step_limits, pixel_limits, height_limits,
                              bounds = [[720, 750],[125,510]], offset = 5, device = 0, show_image = False):
-    # jog to lower limit to start calibration
+    # motor constants
     velocity = 3200
     acceleration = 1000
+<<<<<<< HEAD
     _, _, current_step = motor_jog(current_step, velocity, acceleration, step_limits[0], absolute = True)
 
-    # create array with all steps, zeros for the pixel values, and their corresponding heights
+=======
     dStep = 20
+    delay = 0.1 # delay time before measuring
+    
+>>>>>>> 5425b5de5ffd8a3b0232113e1a58e9584b147510
+    # create array with all steps, zeros for the pixel values, and their corresponding heights
     step_list = np.arange(step_limits[0],step_limits[1],dStep)
+    nPoints = step_list.size
     pixel_list = np.zeros_like(step_list)
     dzdPixel = (height_limits[1]-height_limits[0])/(step_limits[1]-step_limits[0])
     height_list = height_limits[0] + dzdPixel * (step_list - step_list[0])
+<<<<<<< HEAD
     print(step_list)
     print(height_list)
     print(step_limits)
     print(height_limits)
 
 
+=======
+    
+>>>>>>> 5425b5de5ffd8a3b0232113e1a58e9584b147510
     # open camera and set properties
     cap = cv2.VideoCapture(device)
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
+<<<<<<< HEAD
 
     # jog motor until pixel number is correct
     current_pixel = None
@@ -552,15 +577,33 @@ def create_callibration_file(current_step, step_limits, pixel_limits, height_lim
             frame[current_pixel,:,:] = [[0,0,255]]*w # line for current position
             frame[target_pixel,:,:] = [[255,0,0]]*w # line for target position
 
+=======
+    
+    # jog motor to each position and measure pixel number
+    current_pixel = None
+    for i in range(nPoints):
+        # go to desired pixel
+        _, _, current_step = motor_jog(current_step, velocity, acceleration, step_list[i], absolute = True)
+        
+        # get current pixel location (averages over 10 measurements)
+        pixel_measurements = np.zeros(10)
+        for k in range(9):
+            ret, frame = cap.read()
+            pixel_measurements[k], w = get_pixel_from_frame(frame, x_range, y_range, offset) # this value is the vertical position in pixels
+        pixel_list[i] = np.average(pixel_measurements)
+        
+        # show image on screeen if requested
+        if show_image:
+            frame[pixel_list[i],:,:] = [[0,0,255]]*w # line for current position
+            
+>>>>>>> 5425b5de5ffd8a3b0232113e1a58e9584b147510
             # creates frame around detection region
-            frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
-            frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
-            frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
-            frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
+            frame = add_range_boxes(frame, x_range, y_range)
             cv2.imshow('q to quit', frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 cv2.destroyAllWindows()
+<<<<<<< HEAD
                 current_pixel = target_pixel
 
         # adjust position with stepper motor
@@ -571,9 +614,15 @@ def create_callibration_file(current_step, step_limits, pixel_limits, height_lim
                 dstep = 10
             _, _, current_step = motor_jog(current_step, velocity, acceleration, dstep)
 
+=======
+                pixel_list[i] = target_pixel
+    
+>>>>>>> 5425b5de5ffd8a3b0232113e1a58e9584b147510
     # close up shop
     cv2.destroyAllWindows()
     cap.release()
+    full_array = np.array([step_list, pixel_list, height_list])
+    np.save(filename, full_array)
     return current_step
 
 def pixel_to_z(pixel, fitting_func = None, calibration_file = './calibration.npy'):
