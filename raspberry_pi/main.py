@@ -7,6 +7,7 @@ tare_current = 0
 bl_factor = 0
 g = 0
 current_step = 0
+callibration_filename = './callibration_file.npy'
 
 def main_menu():
     print('Operations:')
@@ -29,7 +30,8 @@ while(True):
         # postion calibration
         # align camera
         os.system('clear')
-        print("First, align the rod with black tape with the red box shown on the screen")
+        print("First, align the rod with black tape with the red box shown on the screen,")
+        print('ensuring that the tape is within the red box.')
         core.display_tracker_box()
         
         #set upper and lower pixel limits
@@ -49,14 +51,9 @@ while(True):
                 lower_limit = '480'
             lower_limit = int(lower_limit)
             core.display_tracker_box(limits = [lower_limit,upper_limit])
-            if input('Continue adjusting limits? (y/n)') == 'n':
+            user_input = input('Continue adjusting limits? (y/N)')
+            if user_input.lower() == 'n' or not user_input.lower():
                 limits_set = 1
-                
-        # ensure black line is within the bounds
-        os.system('clear')
-        print('Ensure that the red position tracking line is')
-        print('within the two limiting lines, then')
-        core.display_tracker_box(limits = [lower_limit,upper_limit])
         
         # jogs motor to upper position and prompts for height
         os.system('clear')
@@ -79,9 +76,12 @@ while(True):
         # creates callibration file
         os.system('clear')
         print('Creating calibration file, please wait...')
-        core.create_callibration_file(current_step, [lower_step,upper_step],
+        core.create_callibration_file(current_step, callibration_filename,
+                                      [lower_step,upper_step],
                                       [lower_limit,upper_limit],
                                       [lower_limit_height,upper_limit_height])
+        callib_array = np.load(callibration_filename)
+        print(callib_array)
         
 
     elif user_input == '2':
