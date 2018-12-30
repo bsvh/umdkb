@@ -10,17 +10,18 @@ class CameraThread(threading.Thread):
     def __init__(self, runtime = 20):
         super(CameraThread, self).__init__()
         self.runtime = runtime
-        self.np_position = np.empty()
+        self.np_position = None
     def run(self):
         self.np_position = get_camera_position(run_time = self.runtime)
 
 class CoilThread(threading.Thread):
     def __init__(self, runtime = 20):
         super(CoilThread, self).__init__()
+        self.start_time = time.perf_counter()
         self.voltage = []
         self.timestamp = []
         self.runtime = runtime
-        self.np_voltage = np.empty()
+        self.np_voltage = None
     def run(self):
         while(time.perf_counter() < self.start_time + self.runtime):
             self.voltage.append(get_coil_voltage())
@@ -38,7 +39,7 @@ class MotorThread(threading.Thread):
         self.step_list = []
         self.timestamp = []
         self.runtime = runtime
-        self.np_steps = np.empty()
+        self.np_steps = None
     def run(self):
         current_step = self.current_step
         self.step_list.append(self.current_step)
@@ -46,7 +47,7 @@ class MotorThread(threading.Thread):
 
         time.sleep(self.buffer)
         jog_steps, jog_times, current_step = motor_jog(current_step, self.velocity,
-                                                       self.acceleration, self.steps, 'forward')
+                                                       self.acceleration, self.steps)
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
 
@@ -56,7 +57,7 @@ class MotorThread(threading.Thread):
 
         time.sleep(self.buffer)
         jog_steps, jog_times, current_step = motor_jog(current_step, self.velocity,
-                                                       self.acceleration, self.steps, 'reverse')
+                                                       self.acceleration, -self.steps)
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
 
@@ -285,69 +286,79 @@ def force_mode(current_step, target_pixel):
 
     return current, current_err, current_step
 
-def motor_step(delay, direction = 'forward'):
+def motor_jog(current_step, velocity, acceleration, steps, absolute = False): # velocity in steps/s, acceleration in steps/s^2
+    # defines pin numbers
     pulse_pin     = DigitalOutputDevice(24)
     direction_pin = DigitalOutputDevice(25)
     enable_pin    = DigitalOutputDevice(22)
-
-    min_delay = 1.9E-6
     
-    if direction   == 'forward':
-        direction_pin.off()
-    elif direction == 'reverse':
-        direction_pin.on()
-
+    # sets correct direction pin voltage and enables the enable pin
     enable_pin.on()
-
-    pulse_pin.on()
-    time.sleep(max(min_delay,delay/2))
-    pulse_pin.off()
-    time.sleep(max(min_delay,delay/2))
-
-    enable_pin.off()
-    return
-
-def motor_jog(current_step, velocity, acceleration, steps, direction):
-
-    degs_per_step    = 360/6400
-    delay_at_given_v = (1/velocity)*degs_per_step
-    print(velocity, acceleration, steps, delay_at_given_v)
-
-    accel_delays  = np.empty(steps)
-    prev_velocity = 0
-    next_velocity = 0
-    min_delay = 1.9e-6 # from motor driver specs
-
-    for i, delay in enumerate(accel_delays):
-        if i < steps/2:
-            next_velocity = np.sqrt(prev_velocity**2 + 2*acceleration*degs_per_step)
-        else:
-            next_velocity = np.sqrt(max(0,prev_velocity**2 - 2*acceleration*degs_per_step))
-
-        delay = max(min_delay,(2*degs_per_step)/(prev_velocity + next_velocity))
-
-    #delays = np.maximum(np.full(steps,delay_at_given_v),accel_delays, dtype=np.float16)
-    delays = np.full(steps,delay_at_given_v)
-    print(delays)
+    if absolute:
+        target_step = steps
+        multiplier = np.sign(steps - current_step)
+    else:
+        target_step = current_step + steps
+        multiplier = np.sign(steps)
+        steps = np.abs(steps)
+    if multiplier   == 1:
+        direction_pin.off()
+    elif multiplier == -1:
+        direction_pin.on()
     
+    # creates loop variables
     jog_steps = []
     jog_times = []
-
-    multiplier = 1
-
-    if direction == 'reverse': multiplier = -1
-
-    for delay in delays:
-        motor_step(delay, direction)
-        current_step += multiplier
-        jog_steps.append(current_step)
-        jog_times.append(time.perf_counter())
-
+    current_velocity = 100
+    initial_step = current_step
+    acceleration_steps = velocity**2/(2*acceleration) # approx. num. of steps taken during acceleration
+    current_time = time.perf_counter()
+    
+    #steps forward at the appropriate time
+    while current_step != target_step:
+        #turn pulse pin on and get current time
+        last_time = current_time
+        current_time = time.perf_counter()
+        pulse_pin.on()
+        dt = current_time - last_time
+        
+        ## calculate delay time to next step
+        half_over = np.absolute(current_step - initial_step) > np.absolute(target_step - current_step) # are we more than half done travelling?
+        # if we are still accelerating, increase current_velocity
+        if (current_velocity != velocity and not half_over):
+            current_velocity = min(velocity, current_velocity + acceleration * max(dt,1E-7))
+        # if we are decelerating, decrease current_velocity
+        elif (np.absolute(target_step - current_step) < acceleration_steps != velocity and half_over):
+            current_velocity = max(100, current_velocity - acceleration * dt)
+        
+        # each step takes 1/current_velocity time (in s)
+        delay = 1/current_velocity
+        
+        # save values
+        jog_times.append(current_time) # save current time
+        current_step = current_step + multiplier # calculate current step
+        jog_steps.append(current_step) # save current step
+        
+        # WAIT to turn pulse pin off, then wait again
+        while delay/2 > (time.perf_counter() - current_time):
+            pass
+        # turn pulse pin off, WAIT
+        pulse_pin.off()
+        while delay > (time.perf_counter() - current_time):
+            pass
+        
+    # done with movement, so we turn the enable pin off
+    enable_pin.off()
+            
     return jog_steps, jog_times, current_step
 
-def get_camera_postion(bounds = [[720, 750],[125,510]], offset = 5, device = 0, run_time = 1,
+def get_camera_position(bounds = [[720, 750],[125,510]], offset = 5, device = 0, run_time = 1,
                        output_to_file = False, filename_base = './camera'):
     cap = cv2.VideoCapture(device)
+    
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
+    
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
     
@@ -388,7 +399,7 @@ def get_camera_postion(bounds = [[720, 750],[125,510]], offset = 5, device = 0, 
 
     return pixel_position
 
-def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0):
+def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0, limits = None):
     cap = cv2.VideoCapture(device)
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
@@ -396,8 +407,7 @@ def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
     
-    os.system('clear')
-    print("Press enter when aligned")
+    print("Press q on camera display window to end")
 
     while (cap.isOpened()):
         ret, frame = cap.read()
@@ -413,22 +423,148 @@ def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0)
 
         frame[position,:,:] = [[0,0,255]]*w
         
+        if limits is not None:
+            frame[limits[0],:,:] = [[255,0,0]]*w
+            frame[limits[1],:,:] = [[0,0,0]]*w
+        
         frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
         frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
         frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
         frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
-        cv2.imshow('frame', frame)
+        cv2.imshow('q to quit', frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
             break
-        
-        if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
-            cv2.destroyAllWindows()
-            break
     
     cap.release()
+    return
 
+def jog_to_pixel(current_step, target_pixel, bounds = [[720, 750],[125,510]], offset = 5, device = 0, show_image = False):
+    # open camera and set properties
+    cap = cv2.VideoCapture(device)
+    x_range = (bounds[0][0],bounds[0][1])
+    y_range = (bounds[1][0],bounds[1][1])
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
+    
+    # set stepper motor control values
+    velocity = 3200
+    acceleration = 1000
+    
+    # jog motor until pixel number is correct
+    current_pixel = None
+    while (target_pixel != current_pixel):
+        # get current pixel location
+        ret, frame = cap.read()
+
+        bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
+        lines  = np.average(img, axis=1)
+        cutoff = np.amin(lines) + offset
+
+        _, w = bw.shape
+        
+        current_pixel = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
+        
+        # show image on screeen if requested
+        if show_image:
+            frame[current_pixel,:,:] = [[0,0,255]]*w # line for current position
+            frame[target_pixel,:,:] = [[255,0,0]]*w # line for target position
+            
+            # creates frame around detection region
+            frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
+            frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
+            frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
+            frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
+            cv2.imshow('q to quit', frame)
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                cv2.destroyAllWindows()
+                current_pixel = target_pixel
+
+        # adjust position with stepper motor
+        if target_pixel != current_pixel:
+            if target_pixel > current_pixel:
+                dstep = -10
+            else:
+                dstep = 10
+            _, _, current_step = motor_jog(current_step, velocity, acceleration, dstep)
+    
+    # close up shop
+    cv2.destroyAllWindows()
+    cap.release()
+    return current_step
+
+def create_callibration_file(current_step, step_limits, pixel_limits, height_limits,
+                             bounds = [[720, 750],[125,510]], offset = 5, device = 0, show_image = False):
+    # jog to lower limit to start calibration
+    velocity = 3200
+    acceleration = 1000
+    _, _, current_step = motor_jog(current_step, velocity, acceleration, step_limits[0], absolute = True)
+    
+    # create array with all steps, zeros for the pixel values, and their corresponding heights
+    dStep = 20
+    step_list = np.arange(step_limits[0],step_limits[1],dStep)
+    pixel_list = np.zeros_like(step_list)
+    dzdPixel = (height_limits[1]-height_limits[0])/(step_limits[1]-step_limits[0])
+    height_list = height_limits[0] + dzdPixel * (step_list - step_list[0])
+    print(step_list)
+    print(height_list)
+    print(step_limits)
+    print(height_limits)
+    
+    
+    # open camera and set properties
+    cap = cv2.VideoCapture(device)
+    x_range = (bounds[0][0],bounds[0][1])
+    y_range = (bounds[1][0],bounds[1][1])
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
+    
+    # jog motor until pixel number is correct
+    current_pixel = None
+    while (target_pixel != current_pixel):
+        # get current pixel location
+        ret, frame = cap.read()
+
+        bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
+        lines  = np.average(img, axis=1)
+        cutoff = np.amin(lines) + offset
+
+        _, w = bw.shape
+        
+        current_pixel = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
+        
+        # show image on screeen if requested
+        if show_image:
+            frame[current_pixel,:,:] = [[0,0,255]]*w # line for current position
+            frame[target_pixel,:,:] = [[255,0,0]]*w # line for target position
+            
+            # creates frame around detection region
+            frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
+            frame[y_range[1],x_range[0]:x_range[1],:] = [0,0,255]
+            frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
+            frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
+            cv2.imshow('q to quit', frame)
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                cv2.destroyAllWindows()
+                current_pixel = target_pixel
+
+        # adjust position with stepper motor
+        if target_pixel != current_pixel:
+            if target_pixel > current_pixel:
+                dstep = -10
+            else:
+                dstep = 10
+            _, _, current_step = motor_jog(current_step, velocity, acceleration, dstep)
+    
+    # close up shop
+    cv2.destroyAllWindows()
+    cap.release()
+    return current_step
 
 def pixel_to_z(pixel, fitting_func = None, calibration_file = './calibration.npy'):
     calibration_params = np.load(calibration_file)
@@ -443,16 +579,13 @@ def pixel_to_z(pixel, fitting_func = None, calibration_file = './calibration.npy
 def lin_fit(pixel, m, b):
     return m*pixel + b
 
-def motor_pid(current_step, target_pixel):
-    # WRITE PID CONTROLLER FOR MOTOR HERE
-    return current_step
-
 def coil_pid(current_step, target_pixel):
     # WRITE PID CONTROLLER FOR COIL HERE
     return current, current_err, current_step
 
 def get_coil_voltage():
     # PUT COIL VOLTAGE CODE HERE
+    coil_voltage = 0
     return coil_voltage
 
 def mass_calc(current, current_err, bl_factor, bl_factor_err, g, g_err, tare_current, tare_current_err):

@@ -27,22 +27,76 @@ while(True):
 
     if user_input == '1':
         # postion calibration
+        # align camera
+        os.system('clear')
+        print("First, align the rod with black tape with the red box shown on the screen")
         core.display_tracker_box()
+        
+        #set upper and lower pixel limits
+        limits_set = 0
+        
+        while limits_set == 0:
+            os.system('clear')
+            print('Now, enter values for the upper pixel limit (shown in black)')
+            print('and the lower pixel limit (shown in blue). Limits must fall')
+            print('between 1 and 719. 719 is the BOTTOM of the frame.\n')
+            upper_limit = input('Upper pixel limit (minimum 1, default 230): ')
+            if not upper_limit:
+                upper_limit = '230'
+            upper_limit = int(upper_limit)
+            lower_limit = input('Lower pixel limit (maximum 720, default 480): ')
+            if not lower_limit:
+                lower_limit = '480'
+            lower_limit = int(lower_limit)
+            core.display_tracker_box(limits = [lower_limit,upper_limit])
+            if input('Continue adjusting limits? (y/n)') == 'n':
+                limits_set = 1
+                
+        # ensure black line is within the bounds
+        os.system('clear')
+        print('Ensure that the red position tracking line is')
+        print('within the two limiting lines, then')
+        core.display_tracker_box(limits = [lower_limit,upper_limit])
+        
+        # jogs motor to upper position and prompts for height
+        os.system('clear')
+        print('Jogging motor to upper limit pixel...')
+        current_step = core.jog_to_pixel(current_step, upper_limit, show_image = True)
+        upper_step = current_step
+        os.system('clear')
+        upper_limit_height = int(input('Please enter mass pan height above base in mm: '))
+        upper_limit_height_err = int(input('and the uncertainty in mm: '))
+        
+        # jogs motor to lower position and prompts for height
+        os.system('clear')
+        print('Jogging motor to lower limit pixel...')
+        current_step = core.jog_to_pixel(current_step, lower_limit, show_image = True)
+        lower_step = current_step
+        os.system('clear')
+        lower_limit_height = int(input('Please enter mass pan height above base in mm: '))
+        lower_limit_height_err = int(input('and the uncertainty in mm: '))
+        
+        # creates callibration file
+        os.system('clear')
+        print('Creating calibration file, please wait...')
+        core.create_callibration_file(current_step, [lower_step,upper_step],
+                                      [lower_limit,upper_limit],
+                                      [lower_limit_height,upper_limit_height])
+        
 
     elif user_input == '2':
         # motor adjustment
-        steps = int(input('Steps: '))
-        direction = input('Direction (forward/reverse): ')
+        # ask for step number and direction
+        os.system('clear')
+        steps = int(input('Steps (3200 steps per revolution, SIGNED): '))
 
-        velocity = 60 # INPUT GOOD VALUE
-        acceleration = 720 # INPUT GOOD VALUE
+        # sets acceleration and velocities for motor
+        velocity = 3200 # INPUT GOOD VALUE
+        acceleration = 2000 # INPUT GOOD VALUE
 
-        if direction.lower() != 'forward' and direction.lower() != 'reverse':
-            print('come on bro')
-
-        else:
-            _, _, current_step = core.motor_jog(current_step, velocity, acceleration,
-                                                steps, direction)
+        # moves motor
+        jog_steps, jog_times, current_step = core.motor_jog(current_step, velocity, acceleration,
+                                                steps)
 
     elif user_input == '3':
         # gravity input
@@ -51,7 +105,9 @@ while(True):
 
     elif user_input == '4':
         # b/l constant calibration
-        velocity, voltage, velocity_err, voltage_err, current_step = ...
+        acceleration = 2000
+        target_velocity = 3200
+        velocity, voltage, velocity_err, voltage_err, current_step = \
         core.velocity_mode(current_step, acceleration, target_velocity,
                            buffer = 1, steps = 1600, runtime = 20)
 
