@@ -67,7 +67,7 @@ class MotorThread(threading.Thread):
 
         self.np_steps = np.array([self.step_list,self.timestamp])
 
-def velocity_mode(current_step, acceleration, target_velocity, buffer = 1, steps = 1600, runtime = 20):
+def velocity_mode(current_step, acceleration, target_velocity, callibration_filename, buffer = 1, steps = 1600, runtime = 20):
     motor  = MotorThread(current_step, acceleration, target_velocity, buffer, steps, runtime)
     coil   = CoilThread(runtime)
     camera = CameraThread(runtime)
@@ -90,7 +90,7 @@ def velocity_mode(current_step, acceleration, target_velocity, buffer = 1, steps
     for times in steps[1,:],pixel_positions[1,:],voltages[1,:]:
         times = times - start_time
 
-    z_positions = np.array([pixel_to_z(pixel_positions[0,:]), pixel_positions[1,:]])
+    z_positions = np.array([pixel_to_z(pixel_positions[0,:], callibration_filename), pixel_positions[1,:]])
 
     velocity, voltage, velocity_err, voltage_err = velocity_calc(steps, z_positions, voltages)
 
@@ -539,18 +539,19 @@ def create_callibration_file(current_step, filename, step_limits, pixel_limits, 
     np.save(filename, full_array)
     return current_step
 
-def pixel_to_z(pixel, fitting_func = None, calibration_file = './calibration.npy'):
-    calibration_params = np.load(calibration_file)
+def pixel_to_z(pixel_list, calibration_filename = './calibration.npy'):
+    calibration_array = np.load(calibration_filename)
 
-    if fitting_func == None:
-        fitting_func = lin_fit
+    z_list = np.interp(pixel_list, callibration_array[1,:], callibration_array[2,:])
 
-    z = fitting_func(pixel, *calibration_params['pixel_to_z_params'])
+    return z_list
 
-    return z
+def step_to_z(step_list, calibration_filename = './calibration.npy'):
+    calibration_array = np.load(calibration_filename)
 
-def lin_fit(pixel, m, b):
-    return m*pixel + b
+    z_list = np.interp(step_list, callibration_array[0,:], callibration_array[2,:])
+
+    return z_list
 
 def coil_pid(current_step, target_pixel):
     # WRITE PID CONTROLLER FOR COIL HERE

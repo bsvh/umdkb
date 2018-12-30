@@ -108,7 +108,7 @@ while(True):
         acceleration = 2000
         target_velocity = 3200
         velocity, voltage, velocity_err, voltage_err, current_step = \
-        core.velocity_mode(current_step, acceleration, target_velocity,
+        core.velocity_mode(current_step, acceleration, target_velocity, callibration_filename,
                            buffer = 1, steps = 1600, runtime = 20)
 
         bl_factor, bl_factor_err = core.bl_factor_calc(velocity, voltage, velocity_err, voltage_err)
