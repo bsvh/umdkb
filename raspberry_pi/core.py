@@ -1,36 +1,49 @@
 import numpy as np
 from gpiozero import DigitalOutputDevice
 import cv2
-import threading
+import multiprocessing
 import time
 import matplotlib.pyplot as plt
 import sys, select, os
 import dac8552# import DAC8552, DAC_A, DAC_B, MODE_POWER_DOWN_100K
 
-class CameraThread(threading.Thread):
-    def __init__(self, cap, runtime = 20):
+class CameraThread(multiprocessing.Process):
+    def __init__(self, cap, np_position, runtime = 20):
         super(CameraThread, self).__init__()
+        self.start_time = time.perf_counter()
         self.runtime = runtime
-        self.np_position = None
+        self.cap = cap
+        self.pixels = []
+        self.timestamp = []
+        self.np_position = np_position
     def run(self):
-        self.np_position = get_camera_position(cap, run_time = self.runtime)
+        # for time runtime, gets the current position and time and adds them to the list
+        while(time.perf_counter() < self.start_time + self.runtime):
+            self.pixels.append(get_camera_position(self.cap))
+            self.timestamp.append(time.perf_counter())
+        # creates full np_position array
+        self.np_position = np.array([self.pixels, self.timestamp])
 
-class CoilThread(threading.Thread):
-    def __init__(self, runtime = 20):
+class CoilThread(multiprocessing.Process):
+    def __init__(self, np_voltage, runtime = 20):
+        # builds CoilThread class properties
         super(CoilThread, self).__init__()
         self.start_time = time.perf_counter()
         self.voltage = []
         self.timestamp = []
         self.runtime = runtime
-        self.np_voltage = None
+        self.np_voltage = np_voltage
     def run(self):
+        # for time runtime, gets the current voltage and time and adds them to the list
         while(time.perf_counter() < self.start_time + self.runtime):
             self.voltage.append(get_coil_voltage())
             self.timestamp.append(time.perf_counter())
+        # creates full np_voltage array
         self.np_voltage = np.array([self.voltage,self.timestamp])
 
-class MotorThread(threading.Thread):
-    def __init__(self, current_step, step_limits, acceleration, velocity, buffer = 1, runtime = 20):
+class MotorThread(multiprocessing.Process):
+    def __init__(self, current_step, step_limits, acceleration, velocity, np_steps, buffer = 1, runtime = 20):
+        # builds MotorThread class properties
         super(MotorThread, self).__init__()
         self.current_step = current_step
         self.acceleration = acceleration
@@ -40,39 +53,38 @@ class MotorThread(threading.Thread):
         self.step_list = []
         self.timestamp = []
         self.runtime = runtime
-        self.np_steps = None
+        self.np_steps = np_steps
     def run(self):
+        # waits a time buffer, then moves up and saves values
         current_step = self.current_step
-        self.step_list.append(self.current_step)
-        self.timestamp.append(time.perf_counter())
-
-        time.sleep(self.buffer) # to wait for camera
+        better_sleep(self.buffer)
         jog_steps, jog_times, current_step = motor_jog(current_step, self.velocity,
                                                        self.acceleration, self.step_limits[1], absolute = True)
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
-
-        self.current_step = current_step
-        self.step_list.append(self.current_step)
-        self.timestamp.append(time.perf_counter())
-
-        time.sleep(self.buffer)
+        
+        # waits a time buffer, then moves down and saves values
+        better_sleep(self.buffer)
         jog_steps, jog_times, current_step = motor_jog(current_step, self.velocity,
                                                        self.acceleration, self.step_limits[0], absolute = True)
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
 
-        self.current_step = current_step
-        self.step_list.append(self.current_step)
-        self.timestamp.append(time.perf_counter())
-
+        # creates final np_steps array
         self.np_steps = np.array([self.step_list,self.timestamp])
+        self.current_step = current_step
 
-def velocity_mode(cap, current_step, step_limits, acceleration, target_velocity, calibration_filename, buffer = 1, runtime = 20):
+def velocity_mode(cap, current_step, step_limits, acceleration, target_velocity, calibration_filename, buffer = 1, runtime = 5):
+    # move motor to bottom of range
     _, _, current_step = motor_jog(current_step, target_velocity, acceleration, step_limits[0], absolute = True)
-    motor  = MotorThread(current_step, step_limits, acceleration, target_velocity, buffer, runtime)
-    coil   = CoilThread(runtime)
-    camera = CameraThread(cap, runtime)
+    
+    # starts motor, camera, and coil threads to run
+    np_steps = np.empty(1)
+    np_position = np.empty(1)
+    np_voltage = np.empty(1)
+    motor  = MotorThread(current_step, step_limits, acceleration, target_velocity, np_steps, buffer, runtime)
+    coil   = CoilThread(runtime, np_voltage)
+    camera = CameraThread(cap, np_position, runtime)
 
     for thread in motor, coil, camera:
         thread.start()
@@ -87,12 +99,33 @@ def velocity_mode(cap, current_step, step_limits, acceleration, target_velocity,
     pixel_positions = camera.np_position # 2xN numpy array, [pixel positions, times]
     voltages        = coil.np_voltage # 2xA numpy array, [voltages, times]
 
+    print(steps)
+    print(pixel_positions)
+    print(voltages)
     start_time = np.amin([steps[1,:],pixel_positions[1,:],voltages[1,:]])
 
     for times in steps[1,:],pixel_positions[1,:],voltages[1,:]:
         times = times - start_time
 
     z_positions = np.array([pixel_to_z(pixel_positions[0,:], calibration_filename), pixel_positions[1,:]])
+    fig, ax1 = plt.subplots()
+
+    color = 'tab:red'
+    ax1.set_xlabel('time (s)')
+    ax1.set_ylabel('step number', color=color)
+    ax1.plot(steps[1,:], steps[0,:], color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+
+    color = 'tab:blue'
+    ax2.set_ylabel('position (mm)', color=color)  # we already handled the x-label with ax1
+    ax2.plot(z_positions[1,:], z_positions[0,:], color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    fig.tight_layout()  # otherwise the right y-label is slightly clipped
+    plt.show()
+    input()
 
     velocity, voltage, velocity_err, voltage_err = velocity_calc(steps, z_positions, voltages)
 
@@ -328,12 +361,10 @@ def motor_jog(current_step, velocity = 3200, acceleration = 2000, steps = 1600, 
             jog_steps.append(current_step) # save current step
 
             # WAIT to turn pulse pin off, then wait again
-            while delay/2 > (time.perf_counter() - current_time):
-                pass
+            better_sleep(delay/2, current_time)
             # turn pulse pin off, WAIT
             pulse_pin.off()
-            while delay > (time.perf_counter() - current_time):
-                pass
+            better_sleep(delay, current_time)
 
         # done with movement, so we turn the enable pin off
         enable_pin.off()
@@ -367,34 +398,24 @@ def add_range_boxes(frame, x_range, y_range):
     frame[y_range[0]:y_range[1],x_range[0],:] = [0,0,255]
     frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
     return frame
-
-def get_camera_position(cap, bounds = [[720, 750],[125,510]], offset = 5, run_time = 1,
+        
+def get_camera_position(cap, bounds = [[720, 750],[125,510]], offset = 5,
                        output_to_file = False, filename_base = './camera'):
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
 
-    start_time = time.perf_counter()
-    timestamp = []
-    pixel_list = []
+    pixel_position, w, frame = get_pixel_position(cap, x_range, y_range, offset)
+    
+    if output_to_file:
+        frame = add_range_boxes(frame, x_range, y_range)
+        
+        plt.plot(range(*y_range),lines)
+        plt.axhline(cutoff)
+        plt.savefig(''.join([filename_base,'_lines.png']))
 
-    while(time.perf_counter() < start_time + run_time):
-        this_pixel, w, frame = get_pixel_position(cap, x_range, y_range, offset)
+        frame[pixel_position + y_range[0],:,:] = [[0,0,255]]*w
 
-        pixel_list.append(this_pixel)
-        timestamp.append(time.perf_counter())
-
-        if output_to_file:
-            frame = add_range_boxes(frame, x_range, y_range)
-
-            plt.plot(range(*y_range),lines)
-            plt.axhline(cutoff)
-            plt.savefig(''.join([filename_base,'_lines.png']))
-
-            frame[pixel_position + y_range[0],:,:] = [[0,0,255]]*w
-
-            cv2.imwrite(''.join([filename_base,'_image.png']), frame)
-
-    pixel_position = np.array([pixel_list,timestamp])
+        cv2.imwrite(''.join([filename_base,'_image.png']), frame)
 
     return pixel_position
 
@@ -649,3 +670,10 @@ def bl_factor_calc(velocity, voltage, velocity_err, voltage_err):
                                          (voltage*velocity_err/velocity)**2)
 
     return bl_factor, bl_factor_err
+
+def better_sleep(delay, initial_time = None):
+    if not initial_time:
+        initial_time = time.perf_counter()
+    while time.perf_counter() < initial_time + delay:
+        pass
+    return
