@@ -37,6 +37,7 @@ int init_adc(double t) {
 
   ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);
   ADS1256_StartScan(0);
+  enable_buffer(false);
 
   return 0;
 }
@@ -564,3 +565,12 @@ uint8_t ADS1256_Scan(void) {
 *	The return value:  NULL
 *********************************************************************************************************
 */
+
+// Set the internal buffer (True - enable, False - disable).
+uint8_t enable_buffer(bool val)
+{
+	CS_0();
+	bcm2835_spi_transfer(CMD_WREG | REG_STATUS);
+	bcm2835_spi_transfer((0 << 3) | (1 << 2) | (val << 1));
+	CS_1();
+}

@@ -132,3 +132,5 @@ void ADS1256_ISR(void);
 uint8_t ADS1256_Scan(void);
 
 void bsp_DelayUS(uint64_t micros) { bcm2835_delayMicroseconds(micros); }
+
+uint8_t enable_buffer(bool val);
