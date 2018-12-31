@@ -150,27 +150,6 @@ void bsp_DelayUS(uint64_t micros) { bcm2835_delayMicroseconds(micros); }
 
 /*
 *********************************************************************************************************
-*	name: bsp_InitADS1256
-*	function: Configuration of the STM32 GPIO and SPI interface，The
-*connection ADS1256
-*	parameter: NULL
-*	The return value: NULL
-*********************************************************************************************************
-*/
-
-void bsp_InitADS1256(void) {
-#ifdef SOFT_SPI
-  CS_1();
-  SCK_0();
-  DI_0();
-#endif
-
-  // ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);	/* 配置ADC参数：
-  // 增益1:1, 数据输出速率 1KHz */
-}
-
-/*
-*********************************************************************************************************
 *	name: ADS1256_StartScan
 *	function: Configuration DRDY PIN for external interrupt is triggered
 *	parameter: _ucDiffMode : 0  Single-ended input  8 channel， 1
@@ -657,26 +636,6 @@ uint8_t ADS1256_Scan(void) {
 
   return 0;
 }
-/*
-*********************************************************************************************************
-*	name: Write_DAC8552
-*	function:  DAC send data
-*	parameter: channel : output channel number
-*			   data : output DAC value
-*	The return value:  NULL
-*********************************************************************************************************
-*/
-void Write_DAC8552(uint8_t channel, uint16_t Data) {
-  uint8_t i;
-
-  CS_1();
-  CS_0();
-  bcm2835_spi_transfer(channel);
-  bcm2835_spi_transfer((Data >> 8));
-  bcm2835_spi_transfer((Data & 0xff));
-  CS_1();
-}
-
 
 /*
 *********************************************************************************************************
@@ -724,7 +683,7 @@ int main(int argc, char *argv[]) {
     return -1;
   } 
 
-  ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_15SPS);
+  ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);
   ADS1256_StartScan(0);
   start = clock();
   while (elapsed < 20) {

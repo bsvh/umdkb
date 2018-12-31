@@ -306,21 +306,6 @@ def velocity_calc(steps, z_positions, voltages):
 
     return velocity, voltage, velocity_err, voltage_err
 
-def force_mode(current_step, target_pixel):
-
-    '''
-    needs to move the motor just above the target pixel, then slowly slack it off
-    while feeding increasing current until the coil is supported by the current alone.
-    Then, needs to hover for a short amount of time so that a time average can be
-    done.
-    '''
-
-    current_step = motor_pid(current_step, target_pixel)
-
-    current, current_err = coil_pid(target_pixel)
-
-    return current, current_err, current_step
-
 def motor_jog(current_step, velocity = 3200, acceleration = 2000, steps = 1600, absolute = False): # velocity in steps/s, acceleration in steps/s^2
     # defines pin numbers
     pulse_pin     = DigitalOutputDevice(24)
@@ -403,7 +388,7 @@ def get_pixel_position(cap, x_range, y_range, offset):
     cutoff = np.amin(lines) + offset
 
     _, w = bw.shape
-    
+
     current_pixel = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
     return current_pixel, w, frame
 
@@ -420,7 +405,7 @@ def get_camera_position(cap, bounds = [[720, 750],[125,510]], offset = 5,
     y_range = (bounds[1][0],bounds[1][1])
 
     pixel_position, w, frame = get_pixel_position(cap, x_range, y_range, offset)
-
+    
     if output_to_file:
         frame = add_range_boxes(frame, x_range, y_range)
         
@@ -448,7 +433,7 @@ def display_tracker_box(cap, bounds = [[720, 750],[125,510]], offset = 5, limits
         if limits is not None:
             frame[limits[0],:,:] = [[255,0,0]]*w
             frame[limits[1],:,:] = [[0,0,0]]*w
-        
+
         frame = add_range_boxes(frame, x_range, y_range)
         cv2.imshow('q to quit', frame)
 
@@ -461,7 +446,7 @@ def display_tracker_box(cap, bounds = [[720, 750],[125,510]], offset = 5, limits
 def jog_to_pixel(cap, current_step, target_pixel, bounds = [[720, 750],[125,510]], offset = 5, show_image = False):
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
-    
+
     # set stepper motor control values
     velocity = 3200
     acceleration = 1000
@@ -471,7 +456,7 @@ def jog_to_pixel(cap, current_step, target_pixel, bounds = [[720, 750],[125,510]
     while (num_hits < 10):
         # get current pixel location
         current_pixel, w, frame = get_pixel_position(cap, x_range, y_range, offset) # this value is the vertical position in pixels
-        
+
         # show image on screeen if requested
         if show_image:
             frame[current_pixel,:,:] = [[0,0,255]]*w # line for current position
@@ -494,7 +479,7 @@ def jog_to_pixel(cap, current_step, target_pixel, bounds = [[720, 750],[125,510]
             _, _, current_step = motor_jog(current_step, velocity, acceleration, dstep)
         else:
             num_hits = num_hits + 1
-    
+
     # close up shop
     cv2.destroyAllWindows()
     return current_step
@@ -506,14 +491,14 @@ def create_calibration_file(cap, current_step, filename, step_limits, pixel_limi
     acceleration = 1000
     dStep = 50
     delay = 0.1 # delay time before measuring
-    
+
     # create array with all steps, zeros for the pixel values, and their corresponding heights
     step_list = np.arange(step_limits[0],step_limits[1],dStep)
     nPoints = step_list.size
     pixel_list = np.zeros_like(step_list)
     dzdPixel = (height_limits[1]-height_limits[0])/(step_limits[1]-step_limits[0])
     height_list = height_limits[0] + dzdPixel * (step_list - step_list[0])
-    
+
     # open camera and set properties
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
@@ -523,17 +508,17 @@ def create_calibration_file(cap, current_step, filename, step_limits, pixel_limi
     for i in range(nPoints):
         # go to desired pixel
         _, _, current_step = motor_jog(current_step, velocity, acceleration, step_list[i], absolute = True)
-        
+
         # get current pixel location (averages over 10 measurements)
         pixel_measurements = np.zeros(9)
         for k in range(9):
             pixel_measurements[k], w, frame = get_pixel_position(cap, x_range, y_range, offset) # this value is the vertical position in pixels
         pixel_list[i] = np.average(pixel_measurements)
-        
+
         # show image on screeen if requested
         if show_image:
             frame[pixel_list[i],:,:] = [[0,0,255]]*w # line for current position
-            
+
             # creates frame around detection region
             frame = add_range_boxes(frame, x_range, y_range)
             cv2.imshow('q to quit', frame)
@@ -541,7 +526,7 @@ def create_calibration_file(cap, current_step, filename, step_limits, pixel_limi
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 cv2.destroyAllWindows()
                 pixel_list[i] = target_pixel
-    
+
     # close up shop
     cv2.destroyAllWindows()
     full_array = np.array([step_list, pixel_list, height_list])
@@ -562,7 +547,8 @@ def pixel_to_step(pixel_list, calibration_filename = './calibration.npy'):
 
     return step_list
 
-def coil_controller(current_step, target_pixel, pixel_err = 10, vref = 3.3, coil_resistance = 2040, amp_gain = 1):
+def force_mode(current_step, target_pixel, pixel_err = 10, vref = 3.3,
+               coil_resistance = 2040, amp_gain = 1, debug = False, coil_err = 0, gain_err = 0):
 
     current_step = jog_to_pixel(current_step, target_pixel)
 
@@ -571,6 +557,10 @@ def coil_controller(current_step, target_pixel, pixel_err = 10, vref = 3.3, coil
     _, _, current_step = motor_jog(current_step, steps = -800)
 
     current_pixel = get_camera_position()
+
+    currents = []
+    pixels = []
+    times = []
 
     # check to see if position has dropped more than 2 sigma from target
     if current_pixel > target_pixel + 2*pixel_err:
@@ -586,6 +576,9 @@ def coil_controller(current_step, target_pixel, pixel_err = 10, vref = 3.3, coil
         while(current_pixel < target_pixel + pixel_err):
             current -= 1e-4
             current_pixel = get_camera_position()
+            currents.append(current)
+            pixels.append(current_pixel)
+            times.append(time.perf_counter())
         counter = 0
 
         #balance current
@@ -599,14 +592,29 @@ def coil_controller(current_step, target_pixel, pixel_err = 10, vref = 3.3, coil
                 current = next_current + (current_pixel - target_pixel)*1e-4
             current_pixel = get_camera_position()
 
-    # CODE TO CALCULATE COIL CURRENT ERROR
-    current_err = 0
-    
+            currents.append(current)
+            pixels.append(current_pixel)
+            times.append(time.perf_counter())
+
+            # check to see if position has dropped more than 2 sigma from target
+            if current_pixel > target_pixel + 2*pixel_err:
+                print('more than 2 sigma below target pixel')
+                return None, None, current_step
+
+            elif current_pixel < target_pixel - 2*pixel_err:
+                print('more than 2 sigma above target pixel')
+                return None, None, current_step
+
+    # Average over the currents in the last 50 steps and get the error in the average
+    np_currents = np.array(currents)
+    average_current = np.average(currents[-50:])
+    current_err = np.std(currents[-50:])
+
     _, _, current_step = motor_jog(current_step, steps = 800)
 
     set_coil_current(current = 0)
 
-    return current, current_err, current_step
+    return average_current, current_err, current_step
 
 def set_coil_current(current = None, vref = 3.3, coil_resistance = 2040, amp_gain = 1):
     try:
@@ -623,18 +631,18 @@ def set_coil_current(current = None, vref = 3.3, coil_resistance = 2040, amp_gai
     except RuntimeWarning as e:
         print(str(e))
 
-    dac = DAC8552()
+    dac = dac8552.DAC8552()
 
     try:
         dac.v_ref = vref
         data = int(target_voltage*dac.digit_per_v)
-        dac.write_dac(DAC_A, data)
+        dac.write_dac(dac8552.DAC_A, data)
 
     except KeyboardInterrupt:
         print("\nUser exit during DAC usage. Powering down.\n")
         # Put DAC to Power Down Mode:
-        dac.power_down(DAC_A, MODE_POWER_DOWN_100K)
-        dac.power_down(DAC_B, MODE_POWER_DOWN_100K)
+        dac.power_down(dac8552.DAC_A, dac8552.MODE_POWER_DOWN_100K)
+        dac.power_down(dac8552.DAC_B, dac8552.MODE_POWER_DOWN_100K)
         sys.exit(0)
 
     return data, current, target_voltage

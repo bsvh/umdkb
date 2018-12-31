@@ -20,9 +20,9 @@ def main_menu():
 try:
     # open camera and set properties
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280); 
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
-    
+
     # define initial values
     tare_current = 0
     bl_factor = 0
@@ -34,8 +34,13 @@ try:
     lower_limit = int(calibration_array[1,0])
     upper_limit = int(calibration_array[1,-1])
     current_pixel = core.get_camera_position(cap)
+<<<<<<< HEAD
     current_step = int(core.pixel_to_step(current_pixel, calibration_filename))
     
+=======
+    current_step = core.pixel_to_step(current_pixel[0], calibration_filename)
+
+>>>>>>> 240a5dc560f13cca1e15a688f631c20f745024f8
     #run watt balance
     while(True):
         os.system('clear')
@@ -49,10 +54,10 @@ try:
             print("First, align the rod with black tape with the red box shown on the screen,")
             print('ensuring that the tape is within the red box.')
             core.display_tracker_box(cap)
-            
+
             #set upper and lower pixel limits
             limits_set = 0
-            
+
             while limits_set == 0:
                 os.system('clear')
                 print('Now, enter values for the upper pixel limit (shown in black)')
@@ -70,7 +75,7 @@ try:
                 user_input = input('Continue adjusting limits? (y/N)')
                 if user_input.lower() == 'n' or not user_input.lower():
                     limits_set = 1
-            
+
             # jogs motor to upper position and prompts for height
             os.system('clear')
             print('Jogging motor to upper limit pixel...')
@@ -79,7 +84,7 @@ try:
             os.system('clear')
             upper_limit_height = int(input('Please enter mass pan height above base in mm: '))
             upper_limit_height_err = int(input('and the uncertainty in mm: '))
-            
+
             # jogs motor to lower position and prompts for height
             os.system('clear')
             print('Jogging motor to lower limit pixel...')
@@ -88,7 +93,7 @@ try:
             os.system('clear')
             lower_limit_height = int(input('Please enter mass pan height above base in mm: '))
             lower_limit_height_err = int(input('and the uncertainty in mm: '))
-            
+
             # creates calibration file
             os.system('clear')
             print('Creating calibration file, please wait...')
@@ -98,7 +103,7 @@ try:
                                           [lower_limit_height,upper_limit_height])
             callib_array = np.load(calibration_filename)
             print(callib_array)
-            
+
 
         elif user_input == '2':
             # motor adjustment
@@ -141,7 +146,13 @@ try:
         elif user_input == '7':
             # mass measurement
             if bl_factor == 0 or tare_current == 0 or g == 0:
-                print('calibration not complete\n')
+                print('calibration not complete:\n')
+                if bl_factor == 0:
+                    print('- run velocity mode\n')
+                if tare_current == 0:
+                    print('- tare the balance\n')
+                if g == 0:
+                    print('- input a value for g\n')
 
             else:
                 current, current_err, current_step = core.force_mode(current_step, target_pixel)
