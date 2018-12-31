@@ -7,146 +7,88 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+#include "record_voltages.h"
 
 #define COIL_PIN 1
 #define TIMING_PIN 2
 
 
-#define DRDY 17
-#define RST 18
-#define SPICS 22
+int main(int argc, char *argv[]) {
+  uint8_t id;
+  int32_t adc[2];
+  int32_t volt[2];
+  uint8_t buf[3];
 
-#define CS_1() bcm2835_gpio_write(SPICS, HIGH)
-#define CS_0() bcm2835_gpio_write(SPICS, LOW)
+  FILE *data_file = fopen("data.txt", "w");
+  if (data_file == NULL) {
+	  printf("Error opening file: %s\n", strerror(errno));
+	  return -1;
+  }
 
-#define DRDY_IS_LOW() ((bcm2835_gpio_lev(DRDY) == 0))
+  clock_t start;
+  double elapsed;
+  if (!bcm2835_init())
+    return 1;
 
-#define RST_1() bcm2835_gpio_write(RST, HIGH)
-#define RST_0() bcm2835_gpio_write(RST, LOW)
+  bcm2835_spi_begin();
+  bcm2835_spi_setBitOrder(BCM2835_SPI_BIT_ORDER_MSBFIRST);    // default
+  bcm2835_spi_setDataMode(BCM2835_SPI_MODE1);                 // default
+  bcm2835_spi_setClockDivider(BCM2835_SPI_CLOCK_DIVIDER_256); // default
 
+  bcm2835_gpio_fsel(SPICS, BCM2835_GPIO_FSEL_OUTP); //
+  bcm2835_gpio_write(SPICS, HIGH);
+  bcm2835_gpio_fsel(DRDY, BCM2835_GPIO_FSEL_INPT);
+  bcm2835_gpio_set_pud(DRDY, BCM2835_GPIO_PUD_UP);
+  // ADS1256_WriteReg(REG_MUX,0x01);
+  // ADS1256_WriteReg(REG_ADCON,0x20);
+  // ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_15SPS);
+  id = ADS1256_ReadChipID();
+  if (id != 3) {
+    printf("Error, ASD1256 Chip ID = 0x%d\r\n", (int)id);
+    return -1;
+  } 
 
+  ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);
+  ADS1256_StartScan(0);
+  start = clock();
+  while (elapsed < 20) {
 
-/* gain channelî */
-typedef enum {
-  ADS1256_GAIN_1 = (0),  /* GAIN   1 */
-  ADS1256_GAIN_2 = (1),  /*GAIN   2 */
-  ADS1256_GAIN_4 = (2),  /*GAIN   4 */
-  ADS1256_GAIN_8 = (3),  /*GAIN   8 */
-  ADS1256_GAIN_16 = (4), /* GAIN  16 */
-  ADS1256_GAIN_32 = (5), /*GAIN    32 */
-  ADS1256_GAIN_64 = (6), /*GAIN    64 */
-} ADS1256_GAIN_E;
+      while ((ADS1256_Scan() == 0))
+        ;
+      adc[0] = ADS1256_GetAdc(COIL_PIN);
+      volt[0] = (adc[0] * 100) / 167;
+      adc[1] = ADS1256_GetAdc(TIMING_PIN);
+      volt[1] = (adc[1] * 100) / 167;
 
-/* Sampling speed choice*/
-/*
-        11110000 = 30,000SPS (default)
-        11100000 = 15,000SPS
-        11010000 = 7,500SPS
-        11000000 = 3,750SPS
-        10110000 = 2,000SPS
-        10100001 = 1,000SPS
-        10010010 = 500SPS
-        10000010 = 100SPS
-        01110010 = 60SPS
-        01100011 = 50SPS
-        01010011 = 30SPS
-        01000011 = 25SPS
-        00110011 = 15SPS
-        00100011 = 10SPS
-        00010011 = 5SPS
-        00000011 = 2.5SPS
-*/
-typedef enum {
-  ADS1256_30000SPS = 0,
-  ADS1256_15000SPS,
-  ADS1256_7500SPS,
-  ADS1256_3750SPS,
-  ADS1256_2000SPS,
-  ADS1256_1000SPS,
-  ADS1256_500SPS,
-  ADS1256_100SPS,
-  ADS1256_60SPS,
-  ADS1256_50SPS,
-  ADS1256_30SPS,
-  ADS1256_25SPS,
-  ADS1256_15SPS,
-  ADS1256_10SPS,
-  ADS1256_5SPS,
-  ADS1256_2d5SPS,
+      buf[0] = ((uint32_t)adc >> 16) & 0xFF;
+      buf[1] = ((uint32_t)adc >> 8) & 0xFF;
+      buf[2] = ((uint32_t)adc >> 0) & 0xFF;
 
-  ADS1256_DRATE_MAX
-} ADS1256_DRATE_E;
+      elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
+      if (volt[0] < 0) 
+        fprintf(data_file, "%f -%ld.%03ld %ld.%03ld\n", 
+			elapsed, 
+			volt[0]/1000000, 
+			(volt[0]%1000000)/1000,
+			volt[1]/1000000, 
+			(volt[1]%1000000)/1000
+			);
+      else 
+        fprintf(data_file, "%f %ld.%03ld %ld.%03ld\n", 
+			elapsed, 
+			volt[0]/1000000, 
+			(volt[0]%1000000)/1000,
+			volt[1]/1000000, 
+			(volt[1]%1000000)/1000
+			);
+      //bsp_DelayUS(100000);
+    }
+  bcm2835_spi_end();
+  bcm2835_close();
+  fclose(data_file);
 
-
-typedef struct {
-  ADS1256_GAIN_E Gain;      /* GAIN  */
-  ADS1256_DRATE_E DataRate; /* DATA output  speed*/
-  int32_t AdcNow[8];        /* ADC  Conversion value */
-  uint8_t Channel;          /* The current channel*/
-  uint8_t ScanMode; /*Scanning mode,   0  Single-ended input  8 channel£¬ 1
-                       Differential input  4 channel*/
-} ADS1256_VAR_T;
-
-/*Register definition£º Table 23. Register Map --- ADS1256 datasheet Page 30*/
-enum {
-  /*Register address, followed by reset the default values */
-  REG_STATUS = 0, // x1H
-  REG_MUX = 1,    // 01H
-  REG_ADCON = 2,  // 20H
-  REG_DRATE = 3,  // F0H
-  REG_IO = 4,     // E0H
-  REG_OFC0 = 5,   // xxH
-  REG_OFC1 = 6,   // xxH
-  REG_OFC2 = 7,   // xxH
-  REG_FSC0 = 8,   // xxH
-  REG_FSC1 = 9,   // xxH
-  REG_FSC2 = 10,  // xxH
-};
-
-/* Command definitions Table 24 ADS1256 datasheet  Page 34 */
-enum {
-  CMD_WAKEUP = 0x00,   // Completes SYNC and Exits Standby Mode 0000  0000 (00h)
-  CMD_RDATA = 0x01,    // Read Data 0000  0001 (01h)
-  CMD_RDATAC = 0x03,   // Read Data Continuously 0000   0011 (03h)
-  CMD_SDATAC = 0x0F,   // Stop Read Data Continuously 0000   1111 (0Fh)
-  CMD_RREG = 0x10,     // Read from REG rrr 0001 rrrr (1xh)
-  CMD_WREG = 0x50,     // Write to REG rrr 0101 rrrr (5xh)
-  CMD_SELFCAL = 0xF0,  // Offset and Gain Self-Calibration 1111    0000 (F0h)
-  CMD_SELFOCAL = 0xF1, // Offset Self-Calibration 1111    0001 (F1h)
-  CMD_SELFGCAL = 0xF2, // Gain Self-Calibration 1111    0010 (F2h)
-  CMD_SYSOCAL = 0xF3,  // System Offset Calibration 1111   0011 (F3h)
-  CMD_SYSGCAL = 0xF4,  // System Gain Calibration 1111    0100 (F4h)
-  CMD_SYNC = 0xFC,     // Synchronize the A/D Conversion 1111   1100 (FCh)
-  CMD_STANDBY = 0xFD,  // Begin Standby Mode 1111   1101 (FDh)
-  CMD_RESET = 0xFE,    // Reset to Power-Up Values 1111   1110 (FEh)
-};
-
-ADS1256_VAR_T g_tADS1256;
-static const uint8_t s_tabDataRate[ADS1256_DRATE_MAX] = {
-    0xF0, /*reset the default values  */
-    0xE0, 0xD0, 0xC0, 0xB0, 0xA1, 0x92, 0x82, 0x72,
-    0x63, 0x53, 0x43, 0x33, 0x20, 0x13, 0x03};
-
-void bsp_DelayUS(uint64_t micros);
-void ADS1256_StartScan(uint8_t _ucScanMode);
-static void ADS1256_Send8Bit(uint8_t _data);
-void ADS1256_CfgADC(ADS1256_GAIN_E _gain, ADS1256_DRATE_E _drate);
-static void ADS1256_DelayDATA(void);
-static uint8_t ADS1256_Recive8Bit(void);
-static void ADS1256_WriteReg(uint8_t _RegID, uint8_t _RegValue);
-static uint8_t ADS1256_ReadReg(uint8_t _RegID);
-static void ADS1256_WriteCmd(uint8_t _cmd);
-uint8_t ADS1256_ReadChipID(void);
-static void ADS1256_SetChannal(uint8_t _ch);
-static void ADS1256_SetDiffChannal(uint8_t _ch);
-static void ADS1256_WaitDRDY(void);
-static int32_t ADS1256_ReadData(void);
-
-int32_t ADS1256_GetAdc(uint8_t _ch);
-void ADS1256_ISR(void);
-uint8_t ADS1256_Scan(void);
-
-void bsp_DelayUS(uint64_t micros) { bcm2835_delayMicroseconds(micros); }
+  return 0;
+}
 
 /*
 *********************************************************************************************************
@@ -159,7 +101,6 @@ void bsp_DelayUS(uint64_t micros) { bcm2835_delayMicroseconds(micros); }
 */
 void ADS1256_StartScan(uint8_t _ucScanMode) {
   g_tADS1256.ScanMode = _ucScanMode;
-  /* ¿ªÊ¼É¨ÃèÇ°, ÇåÁã½á¹û»º³åÇø */
   {
     uint8_t i;
 
@@ -646,81 +587,3 @@ uint8_t ADS1256_Scan(void) {
 *********************************************************************************************************
 */
 
-int main(int argc, char *argv[]) {
-  uint8_t id;
-  int32_t adc[2];
-  int32_t volt[2];
-  uint8_t buf[3];
-
-  FILE *data_file = fopen("data.txt", "w");
-  if (data_file == NULL) {
-	  printf("Error opening file: %s\n", strerror(errno));
-	  return -1;
-  }
-
-  clock_t start;
-  double elapsed;
-  if (!bcm2835_init())
-    return 1;
-
-  bcm2835_spi_begin();
-  bcm2835_spi_setBitOrder(BCM2835_SPI_BIT_ORDER_MSBFIRST);    // default
-  bcm2835_spi_setDataMode(BCM2835_SPI_MODE1);                 // default
-  bcm2835_spi_setClockDivider(BCM2835_SPI_CLOCK_DIVIDER_256); // default
-
-  bcm2835_gpio_fsel(SPICS, BCM2835_GPIO_FSEL_OUTP); //
-  bcm2835_gpio_write(SPICS, HIGH);
-  bcm2835_gpio_fsel(DRDY, BCM2835_GPIO_FSEL_INPT);
-  bcm2835_gpio_set_pud(DRDY, BCM2835_GPIO_PUD_UP);
-  // ADS1256_WriteReg(REG_MUX,0x01);
-  // ADS1256_WriteReg(REG_ADCON,0x20);
-  // ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_15SPS);
-  id = ADS1256_ReadChipID();
-  printf("\r\n");
-  printf("ID=\r\n");
-  if (id != 3) {
-    printf("Error, ASD1256 Chip ID = 0x%d\r\n", (int)id);
-    return -1;
-  } 
-
-  ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);
-  ADS1256_StartScan(0);
-  start = clock();
-  while (elapsed < 20) {
-
-      while ((ADS1256_Scan() == 0))
-        ;
-      adc[0] = ADS1256_GetAdc(COIL_PIN);
-      volt[0] = (adc[0] * 100) / 167;
-      adc[1] = ADS1256_GetAdc(TIMING_PIN);
-      volt[1] = (adc[1] * 100) / 167;
-
-      buf[0] = ((uint32_t)adc >> 16) & 0xFF;
-      buf[1] = ((uint32_t)adc >> 8) & 0xFF;
-      buf[2] = ((uint32_t)adc >> 0) & 0xFF;
-
-      elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
-      if (volt[0] < 0) 
-        fprintf(data_file, "%f -%ld.%03ld %ld.%03ld\n", 
-			elapsed, 
-			volt[0]/1000000, 
-			(volt[0]%1000000)/1000,
-			volt[1]/1000000, 
-			(volt[1]%1000000)/1000
-			);
-      else 
-        fprintf(data_file, "%f %ld.%03ld %ld.%03ld\n", 
-			elapsed, 
-			volt[0]/1000000, 
-			(volt[0]%1000000)/1000,
-			volt[1]/1000000, 
-			(volt[1]%1000000)/1000
-			);
-      //bsp_DelayUS(100000);
-    }
-  bcm2835_spi_end();
-  bcm2835_close();
-  fclose(data_file);
-
-  return 0;
-}
