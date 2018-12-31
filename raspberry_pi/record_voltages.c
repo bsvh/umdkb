@@ -724,7 +724,7 @@ int main(int argc, char *argv[]) {
     return -1;
   } 
 
-  ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_15SPS);
+  ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);
   ADS1256_StartScan(0);
   start = clock();
   while (elapsed < 20) {
