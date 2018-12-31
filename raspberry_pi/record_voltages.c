@@ -46,7 +46,7 @@ int main(int argc, char *argv[]) {
   if (id != 3) {
     printf("Error, ASD1256 Chip ID = 0x%d\r\n", (int)id);
     return -1;
-  } 
+  }
 
   ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);
   ADS1256_StartScan(0);
@@ -65,12 +65,12 @@ int main(int argc, char *argv[]) {
       buf[2] = ((uint32_t)adc >> 0) & 0xFF;
 
       elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
-      fprintf(data_file, "%f %ld.%03ld%03ld %ld.%03ld%03ld\n", 
-			elapsed, 
-			volt[0]/1000000, 
+      fprintf(data_file, "%f %ld.%03ld%03ld %ld.%03ld%03ld\n",
+			elapsed,
+			volt[0]/1000000,
 			(volt[0]%1000000)/1000,
 			volt[0] % 1000,
-			volt[1]/1000000, 
+			volt[1]/1000000,
 			(volt[1]%1000000)/1000,
 			volt[0] % 1000
 			);
@@ -83,11 +83,81 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
+int32_t * record_voltages(int t, int s) {
+  int32_t *a = (int*)malloc(sizeof(int) * s * 3);
+
+  uint8_t id;
+  int32_t adc[2];
+  int32_t volt[2];
+  uint8_t buf[3];
+
+  FILE *data_file = fopen("data.txt", "w");
+  if (data_file == NULL) {
+	  printf("Error opening file: %s\n", strerror(errno));
+	  return -1;
+  }
+
+  clock_t start;
+  double elapsed;
+  if (!bcm2835_init())
+    return 1;
+
+  bcm2835_spi_begin();
+  bcm2835_spi_setBitOrder(BCM2835_SPI_BIT_ORDER_MSBFIRST);    // default
+  bcm2835_spi_setDataMode(BCM2835_SPI_MODE1);                 // default
+  bcm2835_spi_setClockDivider(BCM2835_SPI_CLOCK_DIVIDER_256); // default
+
+  bcm2835_gpio_fsel(SPICS, BCM2835_GPIO_FSEL_OUTP); //
+  bcm2835_gpio_write(SPICS, HIGH);
+  bcm2835_gpio_fsel(DRDY, BCM2835_GPIO_FSEL_INPT);
+  bcm2835_gpio_set_pud(DRDY, BCM2835_GPIO_PUD_UP);
+  // ADS1256_WriteReg(REG_MUX,0x01);
+  // ADS1256_WriteReg(REG_ADCON,0x20);
+  // ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_15SPS);
+  id = ADS1256_ReadChipID();
+  if (id != 3) {
+    printf("Error, ASD1256 Chip ID = 0x%d\r\n", (int)id);
+    return -1;
+  }
+
+  ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);
+  ADS1256_StartScan(0);
+  start = clock();
+  int i = 0;
+  while (elapsed < t) {
+
+      while ((ADS1256_Scan() == 0))
+        ;
+      adc[0] = ADS1256_GetAdc(COIL_PIN);
+      volt[0] = (adc[0] * 100) / 167;
+      adc[1] = ADS1256_GetAdc(TIMING_PIN);
+      volt[1] = (adc[1] * 100) / 167;
+
+      buf[0] = ((uint32_t)adc >> 16) & 0xFF;
+      buf[1] = ((uint32_t)adc >> 8) & 0xFF;
+      buf[2] = ((uint32_t)adc >> 0) & 0xFF;
+
+      elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
+
+      a[i] = elapsed
+      i++
+      a[i] = volt[0]
+      i++
+      a[i] = volt[1]
+      i++
+    }
+  bcm2835_spi_end();
+  bcm2835_close();
+  fclose(data_file);
+
+  return a;
+}
+
 /*
 *********************************************************************************************************
 *	name: ADS1256_StartScan
 *	function: Configuration DRDY PIN for external interrupt is triggered
-*	parameter: _ucDiffMode : 0  Single-ended input  8 channel£¬ 1
+*	parameter: _ucDiffMode : 0  Single-ended input  8 channelï¿½ï¿½ 1
 *Differential input  4 channe
 *	The return value: NULL
 *********************************************************************************************************
@@ -187,9 +257,9 @@ void ADS1256_CfgADC(ADS1256_GAIN_E _gain, ADS1256_DRATE_E _drate) {
 
             Bits 4-3 SDCS1, SCDS0: Sensor Detect Current Sources
                     00 = Sensor Detect OFF (default)
-                    01 = Sensor Detect Current = 0.5 ¦Ì A
-                    10 = Sensor Detect Current = 2 ¦Ì A
-                    11 = Sensor Detect Current = 10¦Ì A
+                    01 = Sensor Detect Current = 0.5 ï¿½ï¿½ A
+                    10 = Sensor Detect Current = 2 ï¿½ï¿½ A
+                    11 = Sensor Detect Current = 10ï¿½ï¿½ A
                     The Sensor Detect Current Sources can be activated to verify
        the integrity of an external sensor supplying a signal to the
                     ADS1255/6. A shorted sensor produces a very small signal
@@ -347,8 +417,8 @@ static void ADS1256_SetChannal(uint8_t _ch) {
           0101 = AIN5 (ADS1256 only)
           0110 = AIN6 (ADS1256 only)
           0111 = AIN7 (ADS1256 only)
-          1xxx = AINCOM (when PSEL3 = 1, PSEL2, PSEL1, PSEL0 are ¡°don¡¯t
-  care¡±)
+          1xxx = AINCOM (when PSEL3 = 1, PSEL2, PSEL1, PSEL0 are ï¿½ï¿½donï¿½ï¿½t
+  careï¿½ï¿½)
 
           NOTE: When using an ADS1255 make sure to only select the available
   inputs.
@@ -362,8 +432,8 @@ static void ADS1256_SetChannal(uint8_t _ch) {
           0101 = AIN5 (ADS1256 only)
           0110 = AIN6 (ADS1256 only)
           0111 = AIN7 (ADS1256 only)
-          1xxx = AINCOM (when NSEL3 = 1, NSEL2, NSEL1, NSEL0 are ¡°don¡¯t
-  care¡±)
+          1xxx = AINCOM (when NSEL3 = 1, NSEL2, NSEL1, NSEL0 are ï¿½ï¿½donï¿½ï¿½t
+  careï¿½ï¿½)
   */
   if (_ch > 7) {
     return;
@@ -391,8 +461,8 @@ static void ADS1256_SetDiffChannal(uint8_t _ch) {
           0101 = AIN5 (ADS1256 only)
           0110 = AIN6 (ADS1256 only)
           0111 = AIN7 (ADS1256 only)
-          1xxx = AINCOM (when PSEL3 = 1, PSEL2, PSEL1, PSEL0 are ¡°don¡¯t
-  care¡±)
+          1xxx = AINCOM (when PSEL3 = 1, PSEL2, PSEL1, PSEL0 are ï¿½ï¿½donï¿½ï¿½t
+  careï¿½ï¿½)
 
           NOTE: When using an ADS1255 make sure to only select the available
   inputs.
@@ -406,17 +476,17 @@ static void ADS1256_SetDiffChannal(uint8_t _ch) {
           0101 = AIN5 (ADS1256 only)
           0110 = AIN6 (ADS1256 only)
           0111 = AIN7 (ADS1256 only)
-          1xxx = AINCOM (when NSEL3 = 1, NSEL2, NSEL1, NSEL0 are ¡°don¡¯t
-  care¡±)
+          1xxx = AINCOM (when NSEL3 = 1, NSEL2, NSEL1, NSEL0 are ï¿½ï¿½donï¿½ï¿½t
+  careï¿½ï¿½)
   */
   if (_ch == 0) {
-    ADS1256_WriteReg(REG_MUX, (0 << 4) | 1); /* DiffChannal  AIN0£¬ AIN1 */
+    ADS1256_WriteReg(REG_MUX, (0 << 4) | 1); /* DiffChannal  AIN0ï¿½ï¿½ AIN1 */
   } else if (_ch == 1) {
-    ADS1256_WriteReg(REG_MUX, (2 << 4) | 3); /*DiffChannal   AIN2£¬ AIN3 */
+    ADS1256_WriteReg(REG_MUX, (2 << 4) | 3); /*DiffChannal   AIN2ï¿½ï¿½ AIN3 */
   } else if (_ch == 2) {
-    ADS1256_WriteReg(REG_MUX, (4 << 4) | 5); /*DiffChannal    AIN4£¬ AIN5 */
+    ADS1256_WriteReg(REG_MUX, (4 << 4) | 5); /*DiffChannal    AIN4ï¿½ï¿½ AIN5 */
   } else if (_ch == 3) {
-    ADS1256_WriteReg(REG_MUX, (6 << 4) | 7); /*DiffChannal   AIN6£¬ AIN7 */
+    ADS1256_WriteReg(REG_MUX, (6 << 4) | 7); /*DiffChannal   AIN6ï¿½ï¿½ AIN7 */
   }
 }
 
@@ -508,7 +578,7 @@ int32_t ADS1256_GetAdc(uint8_t _ch) {
 *********************************************************************************************************
 */
 void ADS1256_ISR(void) {
-  if (g_tADS1256.ScanMode == 0) /*  0  Single-ended input  8 channel£¬ 1
+  if (g_tADS1256.ScanMode == 0) /*  0  Single-ended input  8 channelï¿½ï¿½ 1
                                    Differential input  4 channe */
   {
 
@@ -579,4 +649,3 @@ uint8_t ADS1256_Scan(void) {
 *	The return value:  NULL
 *********************************************************************************************************
 */
-
