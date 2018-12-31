@@ -34,13 +34,8 @@ try:
     lower_limit = int(calibration_array[1,0])
     upper_limit = int(calibration_array[1,-1])
     current_pixel = core.get_camera_position(cap)
-<<<<<<< HEAD
     current_step = int(core.pixel_to_step(current_pixel, calibration_filename))
     
-=======
-    current_step = core.pixel_to_step(current_pixel[0], calibration_filename)
-
->>>>>>> 240a5dc560f13cca1e15a688f631c20f745024f8
     #run watt balance
     while(True):
         os.system('clear')
