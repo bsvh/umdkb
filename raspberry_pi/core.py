@@ -6,6 +6,11 @@ import time
 import matplotlib.pyplot as plt
 import sys, select, os
 import dac8552# import DAC8552, DAC_A, DAC_B, MODE_POWER_DOWN_100K
+from ctypes import cdll
+
+adc_lib = cdll.LoadLibrary("record_voltages.so")
+get_voltagefrom_adc = adc_lib.record_voltages
+record_voltages.restype = POINTER(c_int32)
 
 class CameraThread(multiprocessing.Process):
     def __init__(self, cap, pixels, timestamp, runtime = 20):
@@ -25,18 +30,19 @@ class CameraThread(multiprocessing.Process):
         #self.np_position = np.array([self.pixels, self.timestamp])
 
 class CoilThread(multiprocessing.Process):
-    def __init__(self, voltage, timestamp, runtime = 20):
+    def __init__(self, voltage, timestamp, runtime = 20, array_length = 20000):
         # builds CoilThread class properties
         super(CoilThread, self).__init__()
         self.start_time = time.perf_counter()
         self.voltage = voltage
         self.timestamp = timestamp
         self.runtime = runtime
+        self.array_length = array_length
         self.np_voltage = None
     def run(self):
         # for time runtime, gets the current voltage and time and adds them to the list
         while(time.perf_counter() < self.start_time + self.runtime):
-            self.voltage.append(get_coil_voltage())
+            self.voltage.append(record_voltages(self.runtime, self.array_length))
             self.timestamp.append(time.perf_counter())
         # creates full np_voltage array
         #self.np_voltage = np.array([self.voltage,self.timestamp])
