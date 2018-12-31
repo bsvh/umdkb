@@ -363,8 +363,9 @@ def motor_jog(current_step, velocity = 3200, acceleration = 2000, steps = 1600, 
 
     return jog_steps, jog_times, current_step
 
-def get_pixel_from_frame(frame, x_range, y_range, offset):
+def get_pixel_position(cap, x_range, y_range, offset):
     # get current pixel location
+    ret, frame = cap.read()
     bw     = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     img    = bw[y_range[0]:y_range[1],x_range[0]:x_range[1]]
     lines  = np.average(img, axis=1)
@@ -373,7 +374,7 @@ def get_pixel_from_frame(frame, x_range, y_range, offset):
     _, w = bw.shape
     
     current_pixel = np.where(lines < cutoff)[0][0] + y_range[0] # this value is the vertical position in pixels
-    return current_pixel, w
+    return current_pixel, w, frame
 
 def add_range_boxes(frame, x_range, y_range):
     frame[y_range[0],x_range[0]:x_range[1],:] = [0,0,255]
@@ -392,8 +393,7 @@ def get_camera_position(cap, bounds = [[720, 750],[125,510]], offset = 5, run_ti
     pixel_list = []
 
     while(time.perf_counter() < start_time + run_time):
-        ret, frame = cap.read()
-        this_pixel, w = get_pixel_from_frame(frame, x_range, y_range, offset)
+        this_pixel, w, frame = get_pixel_position(cap, x_range, y_range, offset)
         
         pixel_list.append(this_pixel)
         timestamp.append(time.perf_counter())
@@ -420,8 +420,7 @@ def display_tracker_box(cap, bounds = [[720, 750],[125,510]], offset = 5, limits
     print("Press q on camera display window to end")
 
     while (cap.isOpened()):
-        ret, frame = cap.read()
-        position, w = get_pixel_from_frame(frame, x_range, y_range, offset) # this value is the vertical position in pixels
+        position, w, frame = get_pixel_position(cap, x_range, y_range, offset) # this value is the vertical position in pixels
 
         frame[position,:,:] = [[0,0,255]]*w
 
@@ -450,8 +449,7 @@ def jog_to_pixel(cap, current_step, target_pixel, bounds = [[720, 750],[125,510]
     num_hits = 0
     while (num_hits < 10):
         # get current pixel location
-        ret, frame = cap.read()
-        current_pixel, w = get_pixel_from_frame(frame, x_range, y_range, offset) # this value is the vertical position in pixels
+        current_pixel, w, frame = get_pixel_position(cap, x_range, y_range, offset) # this value is the vertical position in pixels
         
         # show image on screeen if requested
         if show_image:
@@ -508,8 +506,7 @@ def create_calibration_file(cap, current_step, filename, step_limits, pixel_limi
         # get current pixel location (averages over 10 measurements)
         pixel_measurements = np.zeros(9)
         for k in range(9):
-            ret, frame = cap.read()
-            pixel_measurements[k], w = get_pixel_from_frame(frame, x_range, y_range, offset) # this value is the vertical position in pixels
+            pixel_measurements[k], w, frame = get_pixel_position(cap, x_range, y_range, offset) # this value is the vertical position in pixels
         pixel_list[i] = np.average(pixel_measurements)
         
         # show image on screeen if requested
