@@ -23,6 +23,7 @@ class CameraThread(multiprocessing.Process):
             self.timestamp.append(time.perf_counter())
         # creates full np_position array
         self.np_position = np.array([self.pixels, self.timestamp])
+        np.save("./np_position.npy", self.np_position)
 
 class CoilThread(multiprocessing.Process):
     def __init__(self, np_voltage, runtime = 20):
@@ -40,6 +41,7 @@ class CoilThread(multiprocessing.Process):
             self.timestamp.append(time.perf_counter())
         # creates full np_voltage array
         self.np_voltage = np.array([self.voltage,self.timestamp])
+        np.save("./np_voltage.npy", self.np_voltage)
 
 class MotorThread(multiprocessing.Process):
     def __init__(self, current_step, step_limits, acceleration, velocity, np_steps, buffer = 1, runtime = 20):
@@ -72,6 +74,7 @@ class MotorThread(multiprocessing.Process):
 
         # creates final np_steps array
         self.np_steps = np.array([self.step_list,self.timestamp])
+        np.save("./np_steps.npy", self.np_steps)
         self.current_step = current_step
 
 def velocity_mode(cap, current_step, step_limits, acceleration, target_velocity, calibration_filename, buffer = 1, runtime = 5):
@@ -93,12 +96,13 @@ def velocity_mode(cap, current_step, step_limits, acceleration, target_velocity,
 
     # 2xM numpy array, [step positions, times]
     # includes one upward and one downward movement with a pause in the beginning and in between
-    steps        = motor.np_steps
-    current_step = motor.current_step
+    steps        = np.load("./np_steps.npy")
+    current_step = steps[0,-1]
 
-    pixel_positions = camera.np_position # 2xN numpy array, [pixel positions, times]
-    voltages        = coil.np_voltage # 2xA numpy array, [voltages, times]
+    pixel_positions = np.load("./np_position.npy") # 2xN numpy array, [pixel positions, times]
+    voltages        = np.load("./np_voltage.npy") # 2xA numpy array, [voltages, times]
 
+    print(current_step)
     print(steps)
     print(pixel_positions)
     print(voltages)
