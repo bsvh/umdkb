@@ -19,8 +19,8 @@ class CameraThread(multiprocessing.Process):
     def run(self):
         # for time runtime, gets the current position and time and adds them to the list
         while(time.perf_counter() < self.start_time + self.runtime):
-            self.pixels.append(get_camera_position(self.cap))
             self.timestamp.append(time.perf_counter())
+            self.pixels.append(get_camera_position(self.cap))
         # creates full np_position array
         #self.np_position = np.array([self.pixels, self.timestamp])
 
@@ -37,6 +37,7 @@ class CoilThread(multiprocessing.Process):
         # for time runtime, gets the current voltage and time and adds them to the list
         while(time.perf_counter() < self.start_time + self.runtime):
             self.voltage.append(get_coil_voltage())
+            better_sleep(0.001)
             self.timestamp.append(time.perf_counter())
         # creates full np_voltage array
         #self.np_voltage = np.array([self.voltage,self.timestamp])
@@ -98,46 +99,44 @@ def velocity_mode(cap, current_step, step_limits, acceleration, target_velocity,
 
     # 2xM numpy array, [step positions, times]
     # includes one upward and one downward movement with a pause in the beginning and in between
-    steps        = np.array([step_list, motor_timestamp])
-    current_step = steps[0,-1]
+    steps           = np.array([step_list, motor_timestamp])
+    current_step    = motor.current_step
+    voltages        = np.array([voltages, coil_timestamp]) # 2xN numpy array, [pixel positions, times]
+    pixel_positions = np.array([pixel_list, camera_timestamp]) # 2xA numpy array, [voltages, times]
 
-    pixel_positions = np.array([voltages, coil_timestamp]) # 2xN numpy array, [pixel positions, times]
-    voltages        = np.array([pixel_list, scamera_timestamp]) # 2xA numpy array, [voltages, times]
-
-    print(current_step)
-    print(steps)
-    print(pixel_positions)
-    print(voltages)
-    start_time = np.amin([steps[1,:],pixel_positions[1,:],voltages[1,:]])
+    start_time = np.amin([np.amin(steps[1,:]),np.amin(pixel_positions[1,:]),np.amin(voltages[1,:])])
 
     for times in steps[1,:],pixel_positions[1,:],voltages[1,:]:
         times = times - start_time
 
     z_positions = np.array([pixel_to_z(pixel_positions[0,:], calibration_filename), pixel_positions[1,:]])
-    fig, ax1 = plt.subplots()
+    # plot results
+    if False:
+        fig, ax1 = plt.subplots()
 
-    color = 'tab:red'
-    ax1.set_xlabel('time (s)')
-    ax1.set_ylabel('step number', color=color)
-    ax1.plot(steps[1,:], steps[0,:], color=color)
-    ax1.tick_params(axis='y', labelcolor=color)
+        color = 'tab:red'
+        ax1.set_xlabel('time (s)')
+        ax1.set_ylabel('step number', color=color)
+        ax1.plot(steps[1,:], steps[0,:], color=color)
+        ax1.tick_params(axis='y', labelcolor=color)
 
-    ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+        ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
 
-    color = 'tab:blue'
-    ax2.set_ylabel('position (mm)', color=color)  # we already handled the x-label with ax1
-    ax2.plot(z_positions[1,:], z_positions[0,:], color=color)
-    ax2.tick_params(axis='y', labelcolor=color)
+        color = 'tab:blue'
+        ax2.set_ylabel('position (mm)', color=color)  # we already handled the x-label with ax1
+        ax2.plot(z_positions[1,:], z_positions[0,:], color=color)
+        ax2.tick_params(axis='y', labelcolor=color)
 
-    fig.tight_layout()  # otherwise the right y-label is slightly clipped
-    plt.show()
-    input()
+        fig.tight_layout()  # otherwise the right y-label is slightly clipped
+        plt.show()
+        input()
+    ###
 
-    velocity, voltage, velocity_err, voltage_err = velocity_calc(steps, z_positions, voltages)
+    velocity, voltage, velocity_err, voltage_err = velocity_calc(steps, z_positions, voltages, target_velocity, acceleration)
 
     return velocity, voltage, velocity_err, voltage_err, current_step
 
-def velocity_calc(steps, z_positions, voltages):
+def velocity_calc(steps, z_positions, voltages, target_velocity, acceleration):
     ### VELOCITY AND VOLTAGE CALCULATION ###
     # GETS the TIME STAMPS where motion starts and stops for the up and down motion
     up_start_time = steps[1, 0] # up motion starts with motor motion starting
@@ -145,8 +144,8 @@ def velocity_calc(steps, z_positions, voltages):
 
     step_dTdN       = np.diff(steps[1, :]) # 1xM-1 numpy array of time delay between motor steps
     up_step_end_ind = np.argmax(step_dTdN) # index of the biggest time between steps
-    up_end_time     = steps[1, up_end_ind] # up motion ends at this time
-    down_start_time = steps[1, up_end_ind+1] # down motion starts at this time
+    up_end_time     = steps[1, up_step_end_ind] # up motion ends at this time
+    down_start_time = steps[1, up_step_end_ind+1] # down motion starts at this time
 
     # SPLITS z_positions array into purely up and purely down motion (no stationary)
     up_start_ind     = np.argmin(np.absolute(z_positions[1, :] - up_start_time))
@@ -155,14 +154,17 @@ def velocity_calc(steps, z_positions, voltages):
     down_end_ind     = np.argmin(np.absolute(z_positions[1, :] - down_end_time))
     up_z_positions   = z_positions[:, up_start_ind:up_end_ind]
     down_z_positions = z_positions[:, down_start_ind:down_end_ind]
+    #plt.plot(down_z_positions[1,:],down_z_positions[0,:])
+    #plt.show()
+    #input()
 
-    ## FITS a line to the UP pixel positions to find the start and end of the linear motion
-    def f_up(x, x1, x2, a2, b2): # x is the independent variable, the rest are parameters
-        # DEFINES sub-parameters based on the four free parameters. These parameters
+    ## FITS a line to the pixel positions to find the start and end of the linear motion
+    # function is parabola stitched to a line stitched to a parabola. THe slope is zero on both ends.
+    # a2 and b2 are the slope and intercept of the line. x0 through x3 are the stitch points.
+    def f_velocity(x, x0, x1, x2, x3, a2, b2): # x is the independent variable, the rest are parameters
+        # DEFINES sub-parameters based on the six free parameters. These parameters
         # are fixed based on the boundary conditions (that the function be continuous,
         # once differentiable, and that its derivatives are zero at the ends)
-        x0 = up_start_time
-        x3 = up_end_time
         b1 = -x0
         b3 = -x3
         a1 = a2/(2*(x1+b1))
@@ -170,11 +172,11 @@ def velocity_calc(steps, z_positions, voltages):
         c1 = a2*x1+b2-a1*(x1+b1)**2
         c3 = a2*x2+b2-a3*(x2+b3)**2
 
-        def f1(x,a1,b1,c1):
+        def f1(x):
             return a1*(x+b1)**2+c1
-        def f2(x,a2,b2):
+        def f2(x):
             return a2*x+b2
-        def f3(x,a3,b3,c3):
+        def f3(x):
             return a3*(x+b3)**2+c3
 
         if x<=x1:
@@ -187,20 +189,46 @@ def velocity_calc(steps, z_positions, voltages):
         return y
 
     # GUESSES initial fit parameters from data
+    x0_guess = up_start_time
     x1_guess = up_start_time+target_velocity/acceleration
     x2_guess = up_end_time-target_velocity/acceleration
+    x3_guess = up_end_time
     a2_guess = (up_z_positions[0,-1]-up_z_positions[0,0])/(up_end_time-up_start_time) # this and the b2 guess assume constant motion throughout the upward motion
     b2_guess = up_z_positions[0,0]-a2_guess*up_z_positions[1,0]
+    print([up_z_positions[0,-1],up_z_positions[0,0]])
+    
+    if True:
+        fig, ax1 = plt.subplots()
+
+        color = 'tab:red'
+        ax1.set_xlabel('time (s)')
+        ax1.set_ylabel('data', color=color)
+        ax1.plot(down_z_positions[1,:],down_z_positions[0,:], color=color)
+        ax1.tick_params(axis='y', labelcolor=color)
+
+        ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+
+        color = 'tab:blue'
+        ax2.set_ylabel('fit', color=color)  # we already handled the x-label with ax1
+        y_vals_temp = np.empty(down_z_positions[1,:].size)
+        for i,x in enumerate(down_z_positions[1,:]):
+            y_vals_temp[i] = f_velocity(x,x0_guess, x1_guess, x2_guess, x3_guess, a2_guess, b2_guess)
+        ax2.plot(down_z_positions[1,:], y_vals_temp, color=color)
+        ax2.tick_params(axis='y', labelcolor=color)
+
+        fig.tight_layout()  # otherwise the right y-label is slightly clipped
+        plt.show()
+        input()
 
     # FITS upward motion data to parabola, linear, parabola of f_up
-    popt_up, pcov_up = np.curve_fit(f_up, up_z_positions[1,:], up_z_positions[0,:],
-                                    p0 = [x1_guess, x2_guess, a2_guess, b2_guess],
-                                    bounds = ([up_start_time,up_start_time,np.inf,np.inf],
-                                              [up_end_time,up_end_time,np.inf,np.inf]))
+    popt_up, pcov_up = np.curve_fit(f_velocity, up_z_positions[1,:], up_z_positions[0,:],
+                                    p0 = [x0_guess, x1_guess, x2_guess, x3_guess, a2_guess, b2_guess],
+                                    bounds = ([up_start_time,up_start_time,up_start_time,up_start_time,np.inf,np.inf],
+                                              [up_end_time,up_end_time,up_end_time,up_end_time,np.inf,np.inf]))
 
     perr_up = np.sqrt(np.diag(pcov_up))
-    lin_up_start = popt_up[0] # beginning TIME STAMP of LINEAR UPWARD MOTION
-    lin_up_stop = popt_up[1] # ending TIME STAMP of LINEAR UPWARD MOTION
+    lin_up_start = popt_up[1] # beginning TIME STAMP of LINEAR UPWARD MOTION
+    lin_up_stop = popt_up[2] # ending TIME STAMP of LINEAR UPWARD MOTION
 
     ## GET average VELOCITY over UPWARD motion
     def lin_func(x, velocity, intercept):
@@ -219,47 +247,19 @@ def velocity_calc(steps, z_positions, voltages):
     up_vel_err = perr_up_lin[0] # error on up_vel_err
 
 
-    ## FITS a line to the DOWN pixel positions to find the start and end of the linear motion
-    def f_down(x, x1, x2, a2, b2): # x is the independent variable, the rest are parameters
-        # DEFINES sub-parameters based on the four free parameters. These parameters
-        # are fixed based on the boundary conditions (that the function be continuous,
-        # once differentiable, and that its derivatives are zero at the ends)
-        x0 = down_start_time
-        x3 = down_end_time
-        b1 = -x0
-        b3 = -x3
-        a1 = a2/(2*(x1+b1))
-        a3 = a2/(2*(x2+b3))
-        c1 = a2*x1+b2-a1*(x1+b1)**2
-        c3 = a2*x2+b2-a3*(x2+b3)**2
-
-        def f1(x,a1,b1,c1):
-            return a1*(x+b1)**2+c1
-        def f2(x,a2,b2):
-            return a2*x+b2
-        def f3(x,a3,b3,c3):
-            return a3*(x+b3)**2+c3
-
-        if x<=x1:
-            y = f1(x)
-        elif x1<x<=x2:
-            y = f2(x)
-        elif x2<x:
-            y = f3(x)
-
-        return y
-
     # GUESSES initial fit parameters from data
+    x0_guess = down_start_time
     x1_guess = down_start_time+target_velocity/acceleration
     x2_guess = down_end_time-target_velocity/acceleration
+    x3_guess = down_end_time
     a2_guess = (down_z_positions[0,-1]-down_z_positions[0,0])/(down_end_time-down_start_time) # this and the b2 guess assume constant motion throughout the downward motion
     b2_guess = down_z_positions[0,0]-a2_guess*down_z_positions[1,0]
 
     # FITS downward motion data to parabola, linear, parabola of f_down
-    popt_down, pcov_down = np.curve_fit(f_down, down_z_positions[1,:], down_z_positions[0,:],
-                                    p0 = [x1_guess, x2_guess, a2_guess, b2_guess],
-                                    bounds = ([down_start_time,down_start_time,np.inf,np.inf],
-                                              [down_end_time,down_end_time,np.inf,np.inf]))
+    popt_down, pcov_down = np.curve_fit(f_velocity, down_z_positions[1,:], down_z_positions[0,:],
+                                    p0 = [x0_guess, x1_guess, x2_guess, x3_guess, a2_guess, b2_guess],
+                                    bounds = ([down_start_time,down_start_time,down_start_time,down_start_time,np.inf,np.inf],
+                                              [down_end_time,down_end_time,down_end_time,down_end_time,np.inf,np.inf]))
 
     perr_down = np.sqrt(np.diag(pcov_down))
     lin_down_start = popt_down[0] # beginning TIME STAMP of LINEAR DOWNWARD MOTION

@@ -126,11 +126,11 @@ try:
         elif user_input == '5':
             # b/l constant calibration
             acceleration = 2000
-            target_velocity = 3200
+            target_velocity = 1000
             step_limits = [lower_step, upper_step]
             velocity, voltage, velocity_err, voltage_err, current_step = \
             core.velocity_mode(cap, current_step, step_limits, acceleration, target_velocity,
-                               calibration_filename, buffer = 1, runtime = 10)
+                               calibration_filename, buffer = 1, runtime = 15)
 
             bl_factor, bl_factor_err = core.bl_factor_calc(velocity, voltage, velocity_err, voltage_err)
 
