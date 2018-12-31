@@ -9,24 +9,11 @@
 #include <time.h>
 #include "record_voltages.h"
 
-#define COIL_PIN 1
 #define TIMING_PIN 2
 
-
-int main(int argc, char *argv[]) {
+int init_adc(double t) {
   uint8_t id;
-  int32_t adc[2];
-  int32_t volt[2];
-  uint8_t buf[3];
 
-  FILE *data_file = fopen("data.txt", "w");
-  if (data_file == NULL) {
-	  printf("Error opening file: %s\n", strerror(errno));
-	  return -1;
-  }
-
-  clock_t start;
-  double elapsed;
   if (!bcm2835_init())
     return 1;
 
@@ -50,107 +37,35 @@ int main(int argc, char *argv[]) {
 
   ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);
   ADS1256_StartScan(0);
-  start = clock();
-  while (elapsed < 20) {
-
-      while ((ADS1256_Scan() == 0))
-        ;
-      adc[0] = ADS1256_GetAdc(COIL_PIN);
-      volt[0] = (adc[0] * 100) / 167;
-      adc[1] = ADS1256_GetAdc(TIMING_PIN);
-      volt[1] = (adc[1] * 100) / 167;
-
-      buf[0] = ((uint32_t)adc >> 16) & 0xFF;
-      buf[1] = ((uint32_t)adc >> 8) & 0xFF;
-      buf[2] = ((uint32_t)adc >> 0) & 0xFF;
-
-      elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
-      fprintf(data_file, "%f %ld.%03ld%03ld %ld.%03ld%03ld\n",
-			elapsed,
-			volt[0]/1000000,
-			(volt[0]%1000000)/1000,
-			volt[0] % 1000,
-			volt[1]/1000000,
-			(volt[1]%1000000)/1000,
-			volt[0] % 1000
-			);
-      //bsp_DelayUS(100000);
-    }
-  bcm2835_spi_end();
-  bcm2835_close();
-  fclose(data_file);
 
   return 0;
 }
 
-int32_t * record_voltages(int t, int s) {
-  int32_t *a = (int*)malloc(sizeof(int) * s * 3);
-
-  uint8_t id;
+int get_voltage(int COIL_PIN) {
   int32_t adc[2];
   int32_t volt[2];
   uint8_t buf[3];
 
-  FILE *data_file = fopen("data.txt", "w");
-  if (data_file == NULL) {
-	  printf("Error opening file: %s\n", strerror(errno));
-	  return -1;
-  }
+  while ((ADS1256_Scan() == 0))
+    ;
+  adc[0] = ADS1256_GetAdc(COIL_PIN);
+  volt[0] = (adc[0] * 100) / 167;
+  adc[1] = ADS1256_GetAdc(TIMING_PIN);
+  volt[1] = (adc[1] * 100) / 167;
 
-  clock_t start;
-  double elapsed;
-  if (!bcm2835_init())
-    return 1;
+  buf[0] = ((uint32_t)adc >> 16) & 0xFF;
+  buf[1] = ((uint32_t)adc >> 8) & 0xFF;
+  buf[2] = ((uint32_t)adc >> 0) & 0xFF;
 
-  bcm2835_spi_begin();
-  bcm2835_spi_setBitOrder(BCM2835_SPI_BIT_ORDER_MSBFIRST);    // default
-  bcm2835_spi_setDataMode(BCM2835_SPI_MODE1);                 // default
-  bcm2835_spi_setClockDivider(BCM2835_SPI_CLOCK_DIVIDER_256); // default
+  return volt[0];
+}
 
-  bcm2835_gpio_fsel(SPICS, BCM2835_GPIO_FSEL_OUTP); //
-  bcm2835_gpio_write(SPICS, HIGH);
-  bcm2835_gpio_fsel(DRDY, BCM2835_GPIO_FSEL_INPT);
-  bcm2835_gpio_set_pud(DRDY, BCM2835_GPIO_PUD_UP);
-  // ADS1256_WriteReg(REG_MUX,0x01);
-  // ADS1256_WriteReg(REG_ADCON,0x20);
-  // ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_15SPS);
-  id = ADS1256_ReadChipID();
-  if (id != 3) {
-    printf("Error, ASD1256 Chip ID = 0x%d\r\n", (int)id);
-    return -1;
-  }
+int kill_adc(){
 
-  ADS1256_CfgADC(ADS1256_GAIN_1, ADS1256_1000SPS);
-  ADS1256_StartScan(0);
-  start = clock();
-  int i = 0;
-  while (elapsed < t) {
-
-      while ((ADS1256_Scan() == 0))
-        ;
-      adc[0] = ADS1256_GetAdc(COIL_PIN);
-      volt[0] = (adc[0] * 100) / 167;
-      adc[1] = ADS1256_GetAdc(TIMING_PIN);
-      volt[1] = (adc[1] * 100) / 167;
-
-      buf[0] = ((uint32_t)adc >> 16) & 0xFF;
-      buf[1] = ((uint32_t)adc >> 8) & 0xFF;
-      buf[2] = ((uint32_t)adc >> 0) & 0xFF;
-
-      elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
-
-      a[i] = elapsed
-      i++
-      a[i] = volt[0]
-      i++
-      a[i] = volt[1]
-      i++
-    }
   bcm2835_spi_end();
   bcm2835_close();
-  fclose(data_file);
 
-  return a;
+  return 0;
 }
 
 /*

@@ -3,6 +3,15 @@ import numpy as np
 import core
 import os
 import cv2
+import time
+import dac8552
+
+# file save locations
+tare_current_filename = './calibration_values/tare_current.npy'
+bl_factor_filename = './calibration_values/bl_factor.npy'
+g_filename = './calibration_values/g_value.npy'
+target_step_filename = './calibration_values/target_step.npy'
+calibration_filename = './calibration_values/calibration_file.npy'
 
 def main_menu():
     print('Operations:')
@@ -18,16 +27,23 @@ def main_menu():
     return input('Selection: ')
 
 try:
+    # start the DAC
+    dac = dac8552.DAC8552()
+    while False:
+        core.set_DAC_voltage(dac,3.3)
+        time.sleep(1)
+        core.set_DAC_voltage(dac,0)
+        time.sleep(1)
     # open camera and set properties
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
 
-    # define initial values
-    tare_current = 0
-    bl_factor = 0
-    g = 0
-    calibration_filename = './calibration_file.npy'
+    # load initial values
+    tare_current = np.load(tare_current_filename)
+    bl_factor = np.load(bl_factor_filename)
+    g = np.load(g_filename)
+    target_step = np.load(target_step_filename)
     calibration_array = np.load(calibration_filename)
     lower_step = calibration_array[0,0]
     upper_step = calibration_array[0,-1]
@@ -111,8 +127,7 @@ try:
             acceleration = 2000 # INPUT GOOD VALUE
 
             # moves motor
-            jog_steps, jog_times, current_step = core.motor_jog(current_step, velocity, acceleration,
-                                                    steps)
+            jog_steps, jog_times, current_step = core.motor_jog(current_step, velocity, acceleration, steps)
 
         elif user_input == '3':
             # display camera
@@ -120,45 +135,34 @@ try:
             
         elif user_input == '4':
             # gravity input
-            g = input('Total gravitational acceleration (m/s^2): ')
-            g_err = input('Uncertainty in total gravitational acceleration (m/s^2): ')
+            g[0] = float(input('Total gravitational acceleration (m/s^2): '))
+            g[1] = float(input('Uncertainty in total gravitational acceleration (m/s^2): '))
+            np.save(g_filename,g)
 
         elif user_input == '5':
             # b/l constant calibration
-            acceleration = 2000
+            acceleration = 4000
             target_velocity = 1000
             step_limits = [lower_step, upper_step]
-            velocity, voltage, velocity_err, voltage_err, current_step = \
+            bl_factor, current_step, target_step = \
             core.velocity_mode(cap, current_step, step_limits, acceleration, target_velocity,
-                               calibration_filename, buffer = 1, runtime = 15)
-
-            bl_factor, bl_factor_err = core.bl_factor_calc(velocity, voltage, velocity_err, voltage_err)
+                               calibration_filename, buffer = 1)
+            np.save(bl_factor_filename, bl_factor)
+            np.save(target_step_filename, target_step)
 
         elif user_input == '6':
             # tare balance
-            tare_current, tare_current_err, current_step = core.force_mode(current_step, target_pixel)
+            tare_current, current_step = core.force_mode(dac, cap, current_step, target_step, calibration_filename)
+            np.save(tare_current_filename, tare_current)
 
         elif user_input == '7':
-            # mass measurement
-            if bl_factor == 0 or tare_current == 0 or g == 0:
-                print('calibration not complete:\n')
-                if bl_factor == 0:
-                    print('- run velocity mode\n')
-                if tare_current == 0:
-                    print('- tare the balance\n')
-                if g == 0:
-                    print('- input a value for g\n')
+            current, current_step = core.force_mode(dac, cap, current_step, target_step, calibration_filename)
+            mass, mass_err = core.mass_calc(current, bl_factor, g, tare_current)
 
-            else:
-                current, current_err, current_step = core.force_mode(current_step, target_pixel)
-                mass, mass_err = core.mass_calc(current, current_err, bl_factor,
-                                                bl_factor_err, g, g_err, tare_current,
-                                                tare_current_err)
-
-                print('I = {:f} +/- {:f}\n'.format(current, current_err))
-                print('B/L Factor = {:f} +/- {:f}\n'.format(bl_factor, bl_factor_err))
-                print('g = {:f} +/- {:f}\n'.format(g, g_err))
-                print('m = {:f} +/- {:f}\n'.format(mass, mass_err))
+            print('I = {:f} +/- {:f}\n'.format(current[0], current[1]))
+            print('B/L Factor = {:f} +/- {:f}\n'.format(bl_factor[0], bl_factor[1]))
+            print('g = {:f} +/- {:f}\n'.format(g[0], g[1]))
+            print('m = {:f} +/- {:f}\n'.format(mass, mass_err))
 
         else:
             print('make a valid selection\n')
@@ -168,4 +172,8 @@ try:
 except KeyboardInterrupt:
     # release camera
     cap.release()
+    dac.power_down(DAC_A, MODE_POWER_DOWN_100K)
+    dac.power_down(DAC_B, MODE_POWER_DOWN_100K)
 cap.release()
+dac.power_down(DAC_A, MODE_POWER_DOWN_100K)
+dac.power_down(DAC_B, MODE_POWER_DOWN_100K)
