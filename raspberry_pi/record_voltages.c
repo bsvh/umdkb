@@ -65,16 +65,7 @@ int main(int argc, char *argv[]) {
       buf[2] = ((uint32_t)adc >> 0) & 0xFF;
 
       elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
-      if (volt[0] < 0) 
-        fprintf(data_file, "%f -%ld.%03ld %ld.%03ld\n", 
-			elapsed, 
-			volt[0]/1000000, 
-			(volt[0]%1000000)/1000,
-			volt[1]/1000000, 
-			(volt[1]%1000000)/1000
-			);
-      else 
-        fprintf(data_file, "%f %ld.%03ld%03ld %ld.%03ld%03ld\n", 
+      fprintf(data_file, "%f %ld.%03ld%03ld %ld.%03ld%03ld\n", 
 			elapsed, 
 			volt[0]/1000000, 
 			(volt[0]%1000000)/1000,
