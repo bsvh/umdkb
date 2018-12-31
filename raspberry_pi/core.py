@@ -8,12 +8,12 @@ import sys, select, os
 import dac8552# import DAC8552, DAC_A, DAC_B, MODE_POWER_DOWN_100K
 
 class CameraThread(threading.Thread):
-    def __init__(self, runtime = 20):
+    def __init__(self, cap, runtime = 20):
         super(CameraThread, self).__init__()
         self.runtime = runtime
         self.np_position = None
     def run(self):
-        self.np_position = get_camera_position(run_time = self.runtime)
+        self.np_position = get_camera_position(cap, run_time = self.runtime)
 
 class CoilThread(threading.Thread):
     def __init__(self, runtime = 20):
@@ -48,7 +48,7 @@ class MotorThread(threading.Thread):
 
         time.sleep(10) # to wait for camera
         jog_steps, jog_times, current_step = motor_jog(current_step, self.velocity,
-                                                       self.acceleration, self.step_limits[0], absolute = True)
+                                                       self.acceleration, self.step_limits[1], absolute = True)
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
 
@@ -58,7 +58,7 @@ class MotorThread(threading.Thread):
 
         time.sleep(self.buffer)
         jog_steps, jog_times, current_step = motor_jog(current_step, self.velocity,
-                                                       self.acceleration, self.step_limits[1], absolute = True)
+                                                       self.acceleration, self.step_limits[0], absolute = True)
         self.step_list.extend(jog_steps)
         self.timestamp.extend(jog_times)
 
@@ -68,10 +68,11 @@ class MotorThread(threading.Thread):
 
         self.np_steps = np.array([self.step_list,self.timestamp])
 
-def velocity_mode(current_step, step_limits, acceleration, target_velocity, callibration_filename, buffer = 1, runtime = 20):
-    motor  = MotorThread(current_step, step_limits, acceleration, target_velocity, buffer, steps, runtime)
+def velocity_mode(cap, current_step, step_limits, acceleration, target_velocity, calibration_filename, buffer = 1, runtime = 20):
+    _, _, current_step = motor_jog(current_step, target_velocity, acceleration, step_limits[0], absolute = True)
+    motor  = MotorThread(current_step, step_limits, acceleration, target_velocity, buffer, runtime)
     coil   = CoilThread(runtime)
-    camera = CameraThread(runtime)
+    camera = CameraThread(cap, runtime)
 
     for thread in motor, coil, camera:
         thread.start()
@@ -91,7 +92,7 @@ def velocity_mode(current_step, step_limits, acceleration, target_velocity, call
     for times in steps[1,:],pixel_positions[1,:],voltages[1,:]:
         times = times - start_time
 
-    z_positions = np.array([pixel_to_z(pixel_positions[0,:], callibration_filename), pixel_positions[1,:]])
+    z_positions = np.array([pixel_to_z(pixel_positions[0,:], calibration_filename), pixel_positions[1,:]])
 
     velocity, voltage, velocity_err, voltage_err = velocity_calc(steps, z_positions, voltages)
 
@@ -381,13 +382,8 @@ def add_range_boxes(frame, x_range, y_range):
     frame[y_range[0]:y_range[1],x_range[1],:] = [0,0,255]
     return frame
         
-def get_camera_position(bounds = [[720, 750],[125,510]], offset = 5, device = 0, run_time = 1,
+def get_camera_position(cap, bounds = [[720, 750],[125,510]], offset = 5, run_time = 1,
                        output_to_file = False, filename_base = './camera'):
-    cap = cv2.VideoCapture(device)
-
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
-
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
 
@@ -412,19 +408,14 @@ def get_camera_position(bounds = [[720, 750],[125,510]], offset = 5, device = 0,
             frame[pixel_position + y_range[0],:,:] = [[0,0,255]]*w
 
             cv2.imwrite(''.join([filename_base,'_image.png']), frame)
-
-    cap.release()
+            
     pixel_position = np.array([pixel_list,timestamp])
 
     return pixel_position
 
-def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0, limits = None):
-    cap = cv2.VideoCapture(device)
+def display_tracker_box(cap, bounds = [[720, 750],[125,510]], offset = 5, limits = None):
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
-
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
 
     print("Press q on camera display window to end")
 
@@ -445,17 +436,12 @@ def display_tracker_box(bounds = [[720, 750],[125,510]], offset = 5, device = 0,
             cv2.destroyAllWindows()
             break
 
-    cap.release()
     return
 
-def jog_to_pixel(current_step, target_pixel, bounds = [[720, 750],[125,510]], offset = 5, device = 0, show_image = False):
-    # open camera and set properties
-    cap = cv2.VideoCapture(device)
+def jog_to_pixel(cap, current_step, target_pixel, bounds = [[720, 750],[125,510]], offset = 5, show_image = False):
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
-
+    
     # set stepper motor control values
     velocity = 3200
     acceleration = 1000
@@ -492,15 +478,14 @@ def jog_to_pixel(current_step, target_pixel, bounds = [[720, 750],[125,510]], of
     
     # close up shop
     cv2.destroyAllWindows()
-    cap.release()
     return current_step
 
-def create_callibration_file(current_step, filename, step_limits, pixel_limits, height_limits,
-                             bounds = [[720, 750],[125,510]], offset = 5, device = 0, show_image = False):
+def create_calibration_file(cap, current_step, filename, step_limits, pixel_limits, height_limits,
+                             bounds = [[720, 750],[125,510]], offset = 5, show_image = False):
     # motor constants
     velocity = 3200
     acceleration = 1000
-    dStep = 20
+    dStep = 50
     delay = 0.1 # delay time before measuring
     
     # create array with all steps, zeros for the pixel values, and their corresponding heights
@@ -511,11 +496,8 @@ def create_callibration_file(current_step, filename, step_limits, pixel_limits, 
     height_list = height_limits[0] + dzdPixel * (step_list - step_list[0])
     
     # open camera and set properties
-    cap = cv2.VideoCapture(device)
     x_range = (bounds[0][0],bounds[0][1])
     y_range = (bounds[1][0],bounds[1][1])
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280);
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720);
 
     # jog motor to each position and measure pixel number
     current_pixel = None
@@ -524,7 +506,7 @@ def create_callibration_file(current_step, filename, step_limits, pixel_limits, 
         _, _, current_step = motor_jog(current_step, velocity, acceleration, step_list[i], absolute = True)
         
         # get current pixel location (averages over 10 measurements)
-        pixel_measurements = np.zeros(10)
+        pixel_measurements = np.zeros(9)
         for k in range(9):
             ret, frame = cap.read()
             pixel_measurements[k], w = get_pixel_from_frame(frame, x_range, y_range, offset) # this value is the vertical position in pixels
@@ -544,7 +526,6 @@ def create_callibration_file(current_step, filename, step_limits, pixel_limits, 
     
     # close up shop
     cv2.destroyAllWindows()
-    cap.release()
     full_array = np.array([step_list, pixel_list, height_list])
     np.save(filename, full_array)
     return current_step
@@ -552,16 +533,16 @@ def create_callibration_file(current_step, filename, step_limits, pixel_limits, 
 def pixel_to_z(pixel_list, calibration_filename = './calibration.npy'):
     calibration_array = np.load(calibration_filename)
 
-    z_list = np.interp(pixel_list, callibration_array[1,:], callibration_array[2,:])
+    z_list = np.interp(-pixel_list, -calibration_array[1,:], calibration_array[2,:])
 
     return z_list
 
-def step_to_z(step_list, calibration_filename = './calibration.npy'):
+def pixel_to_step(pixel_list, calibration_filename = './calibration.npy'):
     calibration_array = np.load(calibration_filename)
 
-    z_list = np.interp(step_list, callibration_array[0,:], callibration_array[2,:])
+    step_list = np.interp(-pixel_list, -calibration_array[1,:], calibration_array[0,:])
 
-    return z_list
+    return step_list
 
 def coil_controller(current_step, target_pixel, pixel_err = 10, vref = 3.3, coil_resistance = 2040, amp_gain = 1):
 
